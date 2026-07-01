@@ -118,6 +118,7 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   doc["pendingBookmarkParagraphIndex"] = s.pendingBookmarkParagraphIndex;
   doc["pendingClippingIndex"] = s.pendingClippingIndex;
   doc["showBootScreen"] = s.showBootScreen;
+  doc["lastBrowsePath"] = s.lastBrowsePath;
 
   String json;
   serializeJson(doc, json);
@@ -135,6 +136,7 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
   s.openEpubPath = doc["openEpubPath"] | std::string("");
   s.favoriteSleepImagePath = doc["favoriteSleepImagePath"] | std::string("");
   s.preferredSleepFolderPath = doc["preferredSleepFolderPath"] | std::string("");
+  s.lastBrowsePath = doc["lastBrowsePath"] | std::string("");
   memset(s.recentSleepImages, 0, sizeof(s.recentSleepImages));
   JsonArrayConst recentArr = doc["recentSleepImages"];
   const int actualCount = recentArr.isNull() ? 0

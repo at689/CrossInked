@@ -1743,7 +1743,15 @@ void HomeActivity::onSelectBook(const std::string& path) {
   activityManager.goToReader(path);
 }
 
-void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
+void HomeActivity::onFileBrowserOpen() {
+  // Restore the last browsed folder if it still exists, else start at the SD root. (CrossInked)
+  const std::string& last = APP_STATE.lastBrowsePath;
+  if (!last.empty() && Storage.exists(last.c_str())) {
+    activityManager.goToFileBrowser(last);
+  } else {
+    activityManager.goToFileBrowser();
+  }
+}
 
 void HomeActivity::onContinueReading() {
   if (!recentBooks.empty()) {

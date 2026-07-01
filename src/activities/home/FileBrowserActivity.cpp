@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <NaturalSort.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
@@ -224,6 +225,12 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
 }
 
 void FileBrowserActivity::loadFiles() {
+  // Remember the last folder browsed so "Browse Files" from Home reopens here
+  // next time instead of the SD root (deep trees are tedious to re-descend). (CrossInked)
+  if (mode == Mode::Books && basepath != APP_STATE.lastBrowsePath) {
+    APP_STATE.lastBrowsePath = basepath;
+    APP_STATE.saveToFile();
+  }
   usingIndex = false;
   clearIndexNameCache();
   fileListMemoryLimited = false;
@@ -938,6 +945,30 @@ void FileBrowserActivity::render(RenderLock&&) {
       }
       if (isPinnedSleepFavorite(fullPath)) {
         return extension.empty() ? std::string("*") : "* " + extension;
+      }
+      // Series-gap marker: when this numbered file's number jumps past the previous
+      // numbered file's (e.g. "6" then "8"), flag the missing number(s) as "[7]" or
+      // "[13-14]". Decimals ("16.5") and omnibus ranges ("1-3") are handled by
+      // parseSeriesNumber so they don't produce false gaps. (CrossInked)
+      if (SETTINGS.flagSeriesGaps != 0 && index > 0 && entry.back() != '/') {
+        const char* prevRaw = entryNameAt(index - 1);
+        if (prevRaw != nullptr && prevRaw[0] != '\0') {
+          const std::string prevEntry(prevRaw);
+          if (prevEntry.back() != '/') {
+            const FsHelpers::SeriesNumber a = FsHelpers::parseSeriesNumber(prevEntry.c_str());
+            const FsHelpers::SeriesNumber b = FsHelpers::parseSeriesNumber(entry.c_str());
+            if (a.numbered && b.numbered && b.start > a.end + 1) {
+              const long firstMissing = a.end + 1;
+              const long lastMissing = b.start - 1;
+              std::string marker = "[" + std::to_string(firstMissing);
+              if (lastMissing > firstMissing) {
+                marker += "-" + std::to_string(lastMissing);
+              }
+              marker += "]";
+              return extension.empty() ? marker : marker + " " + extension;
+            }
+          }
+        }
       }
       return extension;
     };

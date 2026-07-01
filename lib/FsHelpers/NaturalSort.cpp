@@ -71,4 +71,40 @@ size_t naturalSortKey(const char* name, uint8_t* out, size_t cap) {
   return n;
 }
 
+SeriesNumber parseSeriesNumber(const char* name) {
+  SeriesNumber result;
+  if (name == nullptr || !isdigit(static_cast<unsigned char>(*name))) {
+    return result;
+  }
+
+  const char* s = name;
+  long start = 0;
+  while (isdigit(static_cast<unsigned char>(*s))) {
+    start = start * 10 + (*s - '0');
+    s++;
+  }
+
+  result.numbered = true;
+  result.start = start;
+  result.end = start;
+
+  if (*s == '.' && isdigit(static_cast<unsigned char>(s[1]))) {
+    // Decimal novella/interstitial such as "16.5" — counts as part of book 16.
+    result.decimal = true;
+  } else if (*s == '-' && isdigit(static_cast<unsigned char>(s[1]))) {
+    // Omnibus range such as "1-3" — covers books start..end.
+    const char* r = s + 1;
+    long end = 0;
+    while (isdigit(static_cast<unsigned char>(*r))) {
+      end = end * 10 + (*r - '0');
+      r++;
+    }
+    if (end >= start) {
+      result.end = end;
+    }
+  }
+
+  return result;
+}
+
 }  // namespace FsHelpers
