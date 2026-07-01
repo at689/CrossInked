@@ -6,6 +6,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "activities/reader/EpubReaderMenuActivity.h"
 #include "activities/reader/ReaderOptionsActivity.h"
 #include "components/UITheme.h"
+#include "util/ScreenshotUtil.h"
 
 extern ActivityManager activityManager;
 extern GfxRenderer renderer;
@@ -106,11 +108,34 @@ class SimulatorSmokeTest {
     std::_Exit(2);
   }
 
+  // Dump the current framebuffer to <CROSSINK_SIM_SHOT_DIR>/<step>.bmp when that env var
+  // is set, so tooling/CI can capture the actual rendered screens (file browser with
+  // series-gap markers, covers, etc.) for visual verification. (CrossInked)
+  static void maybeDumpScreenshot(const char* name) {
+    const char* dir = std::getenv("CROSSINK_SIM_SHOT_DIR");
+    if (dir == nullptr || dir[0] == '\0') return;
+    char safe[64];
+    size_t j = 0;
+    for (size_t i = 0; name[i] != '\0' && j + 1 < sizeof(safe); ++i) {
+      const char c = name[i];
+      safe[j++] = (c == ' ' || c == '/') ? '_' : c;
+    }
+    safe[j] = '\0';
+    Storage.mkdir(dir);
+    char path[192];
+    snprintf(path, sizeof(path), "%s/%s.bmp", dir, safe);
+    if (ScreenshotUtil::saveFramebufferAsBmp(path, renderer.getFrameBuffer(), renderer.getDisplayWidth(),
+                                             renderer.getDisplayHeight())) {
+      LOG_INF("SMOKE", "Screenshot saved: %s", path);
+    }
+  }
+
   static void renderCurrentStep(const char* name) {
     LOG_INF("SMOKE", "Rendering %s", name);
     if (activityManager.requestUpdateAndWait() != RequestUpdateResult::Rendered) {
       fail("Render was rejected for %s", name);
     }
+    maybeDumpScreenshot(name);
   }
 
   void queueStep(const char* name, SmokeStep nextStep, int framesToSettle = 3) {
