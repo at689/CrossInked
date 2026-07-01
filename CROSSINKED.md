@@ -12,9 +12,33 @@ Project-Gutenberg-inclusive personal library.
 | 1 | **Series-gap markers** in the file browser | ✅ implemented, unit-tested + visually verified | `FileBrowserActivity.cpp`, `NaturalSort.*` |
 | 2 | **`start`-only guide reference fix** (Gutenberg books open at chapter 1, not front matter) | ✅ implemented, integration-tested | `ContentOpfParser.*`, `Epub.cpp` |
 | 3 | **Remember last-browsed folder** for "Browse Files" | ✅ implemented, persistence verified | `HomeActivity.cpp`, `FileBrowserActivity.cpp`, `CrossPointState`, `JsonSettingsIO` |
+| 4 | **Jump-to-letter-group** on hold in the browser | ✅ implemented, unit-tested | `FileBrowserActivity.cpp`, `NaturalSort.*` |
+| 5 | **Content-key cache survival** — manual SD renames stop resetting progress | ✅ implemented, sim-verified (⚠ device-test) | `Epub.cpp`, `Epub.h` |
+| 7 | **Cover prewarm** ("Rebuild Covers") maintenance action | ✅ implemented (⚠ device-test heap/watchdog) | `PrewarmCoversActivity.*`, `SettingsList.h` |
 | 9 | **Test/tooling**: natural-sort + gap unit tests, simulator screenshot capture | ✅ implemented | `test/natural_sort/`, `SimulatorSmokeTest.cpp` |
 | — | Simulator build fixes (mock API skew) | ✅ | `WifiSelectionActivity.cpp`, `main.cpp` |
-| 4,5,6,7,8 | Jump-to-letter, content-key cache survival, primary-author, cover prewarm, orphan-cache reaper | 📋 designed — see [ROADMAP.md](ROADMAP.md) | — |
+| 6,8 | Primary-author display, orphan-cache reaper | 📋 designed — see [ROADMAP.md](ROADMAP.md) | — |
+
+> ⚠ **Needs on-device verification**: #5 (cache adopt/rename) and #7 (heap/watchdog under a full library) pass in the simulator, but their real failure modes only surface on hardware. Flash-test before relying on them.
+
+### 4. Jump-to-letter-group
+Holding the nav button in Books mode jumps the selector to the next/previous
+first-letter group (numbered entries collapse to one group) instead of a fixed
+page — far faster across a 95-author folder. Firmware picker keeps page-jump.
+
+### 5. Content-key cache survival
+Each cache dir gets a `content.key` sidecar (`fnvHash64(title|author)` + source
+path). On a cache miss, if an *orphaned* cache (matching key, whose source file
+no longer exists) is found, CrossInked adopts it (renames the dir) instead of
+rebuilding — so renumbering/reorganizing files directly on the SD card keeps
+reading progress, layout cache, and stats. Sim-verified: rename A→B → *"Adopting
+orphaned cache … (content-key match, source gone)"*, no rebuild.
+
+### 7. Cover prewarm
+**Settings → System → Rebuild Covers** walks `/books` and pre-decodes every
+cover/thumbnail so the recent grid/carousel isn't stuttery on first browse.
+RAM-safe incremental dir-stack walk (never materializes all ~1,850 paths), with
+a live count and cancel.
 
 ### 1. Series-gap markers
 When two consecutive numbered files in a folder skip a number
