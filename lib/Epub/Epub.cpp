@@ -276,7 +276,11 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
     }
   }
 
-  bookMetadata.textReferenceHref = opfParser.textReferenceHref;
+  // Prefer an explicit guide "text" reference; fall back to a "start" reference
+  // (common in EPUB2/Project Gutenberg files that omit "text") so the book opens
+  // at its intended first page rather than spine 0 (title/legal front matter).
+  bookMetadata.textReferenceHref =
+      opfParser.textReferenceHref.empty() ? opfParser.startReferenceHref : opfParser.textReferenceHref;
 
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;

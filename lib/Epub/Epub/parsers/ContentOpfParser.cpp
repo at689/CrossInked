@@ -301,9 +301,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       }
     }
     if (!guideHref.empty()) {
-      if (type == "text" || (type == "start" && !self->textReferenceHref.empty())) {
-        LOG_DBG("COF", "Found %s reference in guide: %s", type.c_str(), guideHref.c_str());
+      if (type == "text") {
+        LOG_DBG("COF", "Found text reference in guide: %s", guideHref.c_str());
         self->textReferenceHref = guideHref;
+      } else if (type == "start") {
+        // Many EPUB2/Project Gutenberg exports provide only a "start" reference (no "text").
+        // Keep it as a fallback; a later "text" reference (resolved in Epub.cpp) still wins.
+        LOG_DBG("COF", "Found start reference in guide: %s", guideHref.c_str());
+        self->startReferenceHref = guideHref;
       } else if ((type == "cover" || type == "cover-page") && self->guideCoverPageHref.empty()) {
         LOG_DBG("COF", "Found cover reference in guide: %s", guideHref.c_str());
         self->guideCoverPageHref = guideHref;
