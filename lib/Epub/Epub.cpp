@@ -553,6 +553,82 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
 }
 
 // load in the meta data for the epub file
+void Epub::writeContentKeySidecar() const {
+  if (bookMetadataCache == nullptr) return;
+  const std::string keyFile = cachePath + "/content.key";
+  // Skip the write if the sidecar already records the current source path.
+  if (Storage.exists(keyFile.c_str())) {
+    std::string existing(Storage.readFile(keyFile.c_str()).c_str());
+    const size_t nl = existing.find('\n');
+    if (nl != std::string::npos) {
+      std::string p = existing.substr(nl + 1);
+      while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
+      if (p == filepath) return;
+    }
+  }
+  const auto& m = bookMetadataCache->coreMetadata;
+  const std::string ck = m.title + "\x1f" + m.author;
+  const uint64_t key = ZipFile::fnvHash64(ck.c_str(), ck.size());
+  String out(std::to_string(key).c_str());
+  out += "\n";
+  out += filepath.c_str();
+  out += "\n";
+  Storage.writeFile(keyFile.c_str(), out);
+}
+
+void Epub::tryAdoptOrphanCacheByContentKey() {
+  if (BookMetadataCache::exists(cachePath)) return;  // our own cache already present
+
+  // Cheap metadata-only parse (no cache writes) to derive the content key.
+  BookMetadataCache::BookMetadata meta;
+  if (!parseContentOpf(meta, /*writeSpineEntries=*/false)) return;
+  if (meta.title.empty() && meta.author.empty()) return;
+  const std::string ck = meta.title + "\x1f" + meta.author;
+  const uint64_t key = ZipFile::fnvHash64(ck.c_str(), ck.size());
+
+  const size_t slash = cachePath.find_last_of('/');
+  if (slash == std::string::npos) return;
+  const std::string root = cachePath.substr(0, slash);       // e.g. "/.crosspoint"
+  const std::string ourName = cachePath.substr(slash + 1);   // e.g. "epub_<hash>"
+
+  auto dir = Storage.open(root.c_str());
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return;
+  }
+
+  char name[128];
+  std::string adoptFrom;
+  for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    f.getName(name, sizeof(name));
+    const bool isDir = f.isDirectory();
+    f.close();
+    if (!isDir) continue;
+    const std::string entryName(name);
+    if (entryName == ourName || entryName.rfind("epub_", 0) != 0) continue;
+
+    const std::string keyFile = root + "/" + entryName + "/content.key";
+    if (!Storage.exists(keyFile.c_str())) continue;
+    std::string content(Storage.readFile(keyFile.c_str()).c_str());
+    const size_t nl = content.find('\n');
+    if (nl == std::string::npos) continue;
+    const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
+    if (storedKey != key) continue;
+    std::string storedPath = content.substr(nl + 1);
+    while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
+    if (storedPath == filepath) continue;                 // same source (shouldn't happen on a miss)
+    if (Storage.exists(storedPath.c_str())) continue;     // original still present -> not an orphan, don't steal
+    adoptFrom = root + "/" + entryName;                   // matching key + source file gone -> adopt
+    break;
+  }
+  dir.close();
+
+  if (adoptFrom.empty()) return;
+  LOG_INF("EBP", "Adopting orphaned cache %s for %s (content-key match, source gone)", adoptFrom.c_str(),
+          filepath.c_str());
+  Storage.rename(adoptFrom.c_str(), cachePath.c_str());  // safe no-op on failure -> falls back to fresh build
+}
+
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
@@ -560,6 +636,13 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
   // Always create CssParser - needed for inline style parsing even without CSS files
   cssParser.reset(new CssParser(cachePath));
+
+  // Content-key cache survival (CrossInked): if our path-hashed cache is missing but an
+  // orphaned cache for the same book (renamed/renumbered on the SD card) still exists,
+  // adopt it so reading progress and layout cache survive the rename.
+  if (buildIfMissing) {
+    tryAdoptOrphanCacheByContentKey();
+  }
 
   // Try to load existing cache first
   if (bookMetadataCache->load()) {
@@ -612,6 +695,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
       }
     }
     loadCrossInkLocations();
+    writeContentKeySidecar();
     LOG_DBG("EBP", "Loaded ePub: %s", filepath.c_str());
     return true;
   }
@@ -720,6 +804,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   }
 
   loadCrossInkLocations();
+  writeContentKeySidecar();
   LOG_DBG("EBP", "Loaded ePub: %s", filepath.c_str());
   return true;
 }

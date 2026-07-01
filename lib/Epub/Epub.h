@@ -55,6 +55,12 @@ class Epub {
   bool parseTocNavFile() const;
   CssParseStatus parseCssFiles(bool forceRebuild = false) const;
   void discoverCssFilesFromZip();
+  // Content-key cache survival (CrossInked): a small "content.key" sidecar records
+  // fnvHash64(title|author) + source path per cache dir. On a cache miss, adopt an
+  // orphaned cache (matching key, source file gone) so manual SD renames/renumbering
+  // don't reset reading progress. See ROADMAP.md #5.
+  void writeContentKeySidecar() const;
+  void tryAdoptOrphanCacheByContentKey();
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
