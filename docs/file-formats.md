@@ -227,6 +227,27 @@ Binary layout:
 - `[41-68]` `dayOfWeekSeconds[7]` (`uint32_t` LE each)
 - `[69-72]` `estimatedTimeLeftSeconds` (`uint32_t` LE, `0` means unavailable)
 
+## `content.key` (CrossInked)
+
+A small UTF-8 text sidecar written in each `epub_<hash>/` cache dir by CrossInked's
+content-key cache-survival feature (see [ROADMAP.md](../ROADMAP.md) #5). It lets a book
+that was renamed or renumbered directly on the SD card **adopt its existing cache**
+(reading progress, layout cache, stats) instead of rebuilding, because the path-derived
+cache directory name changes but the content key does not.
+
+Two newline-terminated lines:
+
+```text
+<contentKey>     # decimal fnvHash64(title + '\x1f' + author) of the book metadata
+<sourcePath>     # the SD-card path the cache was last built/opened for, e.g. /books/Author/1 Title.epub
+```
+
+Written by `Epub::writeContentKeySidecar()` after a successful load, and consulted by
+`Epub::tryAdoptOrphanCacheByContentKey()` on a cache miss: if some other `epub_*` dir's
+`content.key` has a matching key **and** its `sourcePath` no longer exists on the card,
+that dir is renamed to the current book's cache path (adopted). Adoption never touches a
+cache whose `sourcePath` still resolves, so a live book's cache is never stolen.
+
 ## `section.bin`
 
 ### Version 41

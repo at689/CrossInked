@@ -53,3 +53,32 @@ pio run -e simulator
 On first open of an EPUB, an **Indexing...** popup appears while the section cache is built in `.crosspoint/`.
 
 If rendering looks stale after a code change, delete `./fs_/.crosspoint/` to clear simulator caches.
+
+## Screenshot Capture (CrossInked)
+
+CrossInked's smoke test can dump each rendered screen to a BMP for visual verification
+(e.g. checking the file browser's series-gap markers, cover rendering, or a new screen).
+Set `CROSSINK_SIM_SHOT_DIR` to an SD-relative path and run the smoke build directly:
+
+```sh
+CROSSINK_SIMULATOR_SMOKE_TEST=1 \
+CROSSINK_SIMULATOR_SMOKE_BOOK="/books/Some Book.epub" \
+CROSSINK_SIM_SHOT_DIR=/screenshots \
+SDL_VIDEODRIVER=dummy \
+.pio/build/simulator/program
+```
+
+Each smoke step (`Home`, `File Browser`, `Reader`, …) is written to
+`fs_/screenshots/<Step>.bmp`. Implemented in `src/simulator/SimulatorSmokeTest.cpp`
+via the existing `ScreenshotUtil::saveFramebufferAsBmp`. Convert to PNG with any tool
+(e.g. Pillow) for viewing. `run_simulator_smoke_test.py` uses a throwaway `fs_`, so to
+keep the screenshots run the program directly against a staged `./fs_/books/`.
+
+## Build Note (CrossInked)
+
+CrossInked carries two `#ifdef SIMULATOR` guards required to build `env:simulator`
+against the pinned simulator mock, whose API had drifted from the fork's `src/`:
+`WifiSelectionActivity.cpp` (3-arg `WiFi.disconnect` overload absent from the mock) and
+`main.cpp` (`Storage.installDateTimeCallback` absent from the mock `HalStorage`). Both
+only affect the simulator build; device behavior is unchanged. If a future simulator-lib
+bump reintroduces these symbols, the guards can be removed.

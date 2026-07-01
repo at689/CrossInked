@@ -1,4 +1,23 @@
 # Changelog
+
+## [CrossInked] - 2026-07-01
+
+Personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) tuned for a large,
+series-heavy, Project-Gutenberg-inclusive library. See `CROSSINKED.md` for details and
+per-feature test status, and `ROADMAP.md` for planned work.
+
+### Added
+- Series-gap markers in the file browser: numbered folders that skip a number (`6` then `8`) flag the missing number(s) as `[7]` / `[13-14]`; novellas (`16.5`) and omnibus (`1-3`) never false-positive. Toggle in `Settings > System > Flag Series Gaps`.
+- Jump-to-letter-group: holding the nav button in Books mode jumps to the next/previous first-letter group instead of a fixed page.
+- Remember last-browsed folder: `Browse Files` reopens the last folder instead of the SD root.
+- Content-key cache survival: a `content.key` sidecar lets a book renamed/renumbered directly on the SD card adopt its old cache (reading progress, layout, stats) instead of rebuilding. *(Verify on-device.)*
+- Cover prewarm: `Settings > System > Rebuild Covers` pre-decodes every cover via a RAM-safe incremental walk with progress + cancel. *(Verify on-device.)*
+- Developer tooling: `test/natural_sort/` gtest suite and simulator BMP screenshot capture (`CROSSINK_SIM_SHOT_DIR`).
+
+### Fixed
+- Guide `type="start"`-only EPUBs (common in EPUB2 / Project Gutenberg exports) now open at chapter 1 instead of the title/license front matter. Bumps `BOOK_CACHE_VERSION` to 9.
+- Simulator (`env:simulator`) build restored: guarded two calls whose mock API had drifted (`WifiSelectionActivity.cpp`, `main.cpp`).
+
 ## [v1.3.4] - 2026-06-24
 
 ### Added

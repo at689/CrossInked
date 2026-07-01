@@ -22,6 +22,20 @@ pio run -e default
 
 `pio run` without `-e` builds the release matrix from `platformio.ini` (`teensy`, `tiny`, and `xlarge`). Use it before opening broad firmware PRs, but prefer explicit environments while iterating.
 
+### CrossInked: unit tests and screenshots
+
+Pure host-side logic has gtest coverage under `test/` (CMake + `cmake`). CrossInked adds
+`test/natural_sort/` covering `naturalCompare`, `parseSeriesNumber` (the series-gap
+building block), and `firstSortChar` (jump-to-letter). Run all unit tests with:
+
+```sh
+cd test && cmake -S . -B build && cmake --build build
+ctest --test-dir build --output-on-failure   # or run a binary directly, e.g. ./build/natural_sort/NaturalSortTest
+```
+
+To visually verify a rendered screen (e.g. the file browser's series-gap markers), use the
+simulator screenshot capture documented in [Simulator → Screenshot Capture](../simulator.md#screenshot-capture-crossinked).
+
 ## Flash and monitor
 
 Flash firmware:

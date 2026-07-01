@@ -22,6 +22,16 @@ Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3).
 - Keep `.claude/CONTEXT.md` short. Add only reusable findings, not turn-by-turn history.
 - If asked to summarize a session, create `.claude/CONTEXT-YYYY-MM-DD.md` with the relevant findings for that session.
 
+## CrossInked Fork Notes
+
+This repo is **CrossInked**, a personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) (→ CrossPoint Reader), tuned for a large, series-heavy, Gutenberg-inclusive library. `origin` is `at689/CrossInked`; `upstream` is `uxjulia/CrossInk` (pull from there to sync). Author commits with the GitHub `noreply` email (private-email push protection is on).
+
+- **What the fork adds** and per-feature test status: `CROSSINKED.md`. **Planned work**: `ROADMAP.md`. Keep both current when you add/finish a feature.
+- Fork-specific code is marked with `(CrossInked)` comments. Touch points: `lib/FsHelpers/NaturalSort.*` (series-gap + jump-to-letter helpers), `src/activities/home/FileBrowserActivity.cpp` (gap markers, last-folder, letter-jump), `lib/Epub/Epub/parsers/ContentOpfParser.cpp` + `lib/Epub/Epub.cpp` (start-ref fix, content-key cache survival), `src/activities/settings/PrewarmCoversActivity.*` (cover prewarm), `src/simulator/SimulatorSmokeTest.cpp` (screenshot capture).
+- **Two `#ifdef SIMULATOR` build guards** (`WifiSelectionActivity.cpp:412`, `main.cpp:820`) are required to build `env:simulator` against the pinned mock — keep them until the simulator lib catches up.
+- Pure logic gets gtest coverage under `test/` (see `test/natural_sort/`); UI/render changes get a simulator screenshot check (`CROSSINK_SIM_SHOT_DIR`). Both are documented in `docs/contributing/testing-debugging.md`.
+- Two features (**content-key cache survival**, **cover prewarm**) have hardware-only failure modes (SD rename semantics, heap/watchdog) — they pass in the simulator but say so in the PR/changelog and verify on-device.
+
 ## Repo Skills
 
 - Do not read every `.claude/skills/*/SKILL.md` at session start.
@@ -126,6 +136,7 @@ Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3).
 - EPUB cache lives under `.crosspoint/epub_<hash>/`.
 - If you change binary cache layouts, bump the format version first and document it in `docs/file-formats.md`.
 - Cache identity is tied to the book path hash; moving or renaming a book creates a different cache.
+- **CrossInked**: each cache dir carries a `content.key` text sidecar (`fnvHash64(title|author)` + source path). On a cache miss, `Epub::tryAdoptOrphanCacheByContentKey()` adopts an orphaned cache (matching key, source path gone) instead of rebuilding, so a renamed/renumbered book keeps its progress. See `docs/file-formats.md`. Don't assume a path change always means a cold cache.
 - Clear the relevant `.crosspoint/epub_<hash>/` cache when testing EPUB parser, layout, image, or binary cache format changes that may otherwise reuse stale output.
 
 ## Git Workflow

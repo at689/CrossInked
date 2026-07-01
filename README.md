@@ -1,6 +1,31 @@
-> **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
+# CrossInked
 
-## What's different in this fork
+> **A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk)** — which is
+> itself a fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) —
+> for the Xteink X3/X4. CrossInked keeps everything CrossInk offers and adds features
+> tuned for a **large, series-heavy, Project-Gutenberg-inclusive personal library**.
+
+Lineage: **CrossInked → [CrossInk](https://github.com/uxjulia/CrossInk) → [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)**.
+
+## What CrossInked adds (on top of CrossInk)
+
+See **[CROSSINKED.md](./CROSSINKED.md)** for details, screenshots, and per-feature test status, and **[ROADMAP.md](./ROADMAP.md)** for what's planned next.
+
+- **Series-gap markers** — a numbered folder that skips (`6` then `8`) flags the missing number(s) as `[7]` / `[13-14]`; novellas (`16.5`) and omnibus (`1-3`) never false-positive. Toggle in *Settings → System → Flag Series Gaps*.
+- **`start`-only guide fix** — EPUB2 / Project Gutenberg books that ship only a guide `type="start"` reference now open at chapter 1 instead of the title/license front matter.
+- **Remember last-browsed folder** — *Browse Files* reopens where you left off instead of the SD root (a real win for deep Genre/Author/Series trees).
+- **Jump-to-letter-group** — holding the nav button jumps by first letter instead of a fixed page, so large author/title folders scan fast.
+- **Content-key cache survival** — renaming/renumbering books directly on the SD card no longer resets reading progress: a `content.key` sidecar lets a moved book adopt its old cache. *(Simulator-verified; verify on-device.)*
+- **Cover prewarm** — *Settings → System → Rebuild Covers* pre-decodes every cover so the recent grid/carousel isn't stuttery. *(Verify on-device.)*
+- **Developer tooling** — `naturalCompare`/series-gap/`firstSortChar` gtest suite (`test/natural_sort/`), simulator screenshot capture (`CROSSINK_SIM_SHOT_DIR`), and two fixes that were required to build the simulator at all.
+
+> **Testing note:** CrossInked's additions are validated in the CrossPoint simulator (unit tests + rendered-frame checks). The cache-survival and cover-prewarm features have hardware-only failure modes (SD rename semantics, heap/watchdog) and should be flash-tested before you rely on them. The CrossInk base below is confirmed working on the X3 and X4.
+
+---
+
+## About the CrossInk base fork
+
+Everything below is inherited from CrossInk (fonts, reading stats, themes, etc.) and still applies.
 
 My goal with this fork was to maintain the core Crosspoint firmware while integrating my preferred typography and some lightweight reading statistics. I’ve focused on keeping the underlying system stable while layering in a few "nice-to-have" features and UI refinements along the way.
 
@@ -114,6 +139,8 @@ See [Installation](./docs/installation.md) for step-by-step flashing and revert 
 
 ## Documentation
 
+- **[CrossInked changes](./CROSSINKED.md)** — what this fork adds, with test status
+- **[CrossInked roadmap](./ROADMAP.md)** — planned features
 - [User Guide](./USER_GUIDE.md)
 - [Installation](./docs/installation.md)
 - [Font Build Variants](./docs/font-build-variants.md)
