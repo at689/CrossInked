@@ -948,6 +948,7 @@ inline std::vector<SettingInfo> buildSystemFilesCacheSettingsList(const std::vec
   addSettingByName(settings, allSettings, StrId::STR_REMOVE_READ_FROM_RECENTS);
   addSettingByName(settings, allSettings, StrId::STR_MOVE_FINISHED_TO_READ);
   settings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
+  settings.push_back(SettingInfo::Action(StrId::STR_PREWARM_COVERS, SettingAction::PrewarmCovers));
   return settings;
 }
 

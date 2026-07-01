@@ -34,6 +34,7 @@ enum class SettingAction {
   BackupStats,
   ResetGlobalStats,
   ClearCache,
+  PrewarmCovers,
   CheckForUpdates,
   SdFirmwareUpdate,
   Language,
