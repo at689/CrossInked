@@ -224,6 +224,26 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
   return true;
 }
 
+size_t FileBrowserActivity::letterJumpIndex(bool forward) {
+  const int n = static_cast<int>(entryCount());
+  if (n <= 1) return selectorIndex;
+  const int cur = static_cast<int>(selectorIndex);
+  const char curChar = FsHelpers::firstSortChar(entryNameAt(cur));
+  if (forward) {
+    for (int k = cur + 1; k < n; ++k) {
+      if (FsHelpers::firstSortChar(entryNameAt(k)) != curChar) return static_cast<size_t>(k);
+    }
+    return static_cast<size_t>(n - 1);
+  }
+  // Backward: land on the first entry of the previous distinct first-letter group.
+  int k = cur - 1;
+  while (k >= 0 && FsHelpers::firstSortChar(entryNameAt(k)) == curChar) --k;
+  if (k < 0) return 0;
+  const char prevChar = FsHelpers::firstSortChar(entryNameAt(k));
+  while (k - 1 >= 0 && FsHelpers::firstSortChar(entryNameAt(k - 1)) == prevChar) --k;
+  return static_cast<size_t>(k);
+}
+
 void FileBrowserActivity::loadFiles() {
   // Remember the last folder browsed so "Browse Files" from Home reopens here
   // next time instead of the SD root (deep trees are tedious to re-descend). (CrossInked)
@@ -854,13 +874,19 @@ void FileBrowserActivity::loop() {
     requestUpdate();
   });
 
+  // Hold-to-jump: in Books mode, jump by first-letter group (far more useful for a
+  // large sorted library); the firmware picker keeps fixed-page jumping. (CrossInked)
   buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    selectorIndex = (mode == Mode::Books)
+                        ? letterJumpIndex(true)
+                        : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    selectorIndex = (mode == Mode::Books)
+                        ? letterJumpIndex(false)
+                        : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 }

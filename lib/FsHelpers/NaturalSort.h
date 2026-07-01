@@ -24,4 +24,9 @@ struct SeriesNumber {
 // number, so titles that merely start with a digit word still parse their prefix.
 SeriesNumber parseSeriesNumber(const char* name);
 
+// First sort-relevant character of a name, lowercased: the first ASCII letter or
+// digit (all digits collapse to '0' so numbered entries form one group). Returns
+// 0 for names with no alphanumeric char. Used for jump-to-letter-group navigation.
+char firstSortChar(const char* name);
+
 }  // namespace FsHelpers

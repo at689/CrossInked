@@ -107,4 +107,14 @@ SeriesNumber parseSeriesNumber(const char* name) {
   return result;
 }
 
+char firstSortChar(const char* name) {
+  if (name == nullptr) return 0;
+  for (const char* s = name; *s; ++s) {
+    const unsigned char c = static_cast<unsigned char>(*s);
+    if (isdigit(c)) return '0';  // all numbered entries collapse to one group
+    if (isalpha(c)) return static_cast<char>(tolower(c));
+  }
+  return 0;
+}
+
 }  // namespace FsHelpers

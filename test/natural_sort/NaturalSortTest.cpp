@@ -95,3 +95,26 @@ TEST(SeriesGap, DoesNotFlagFalsePositives) {
   EXPECT_FALSE(hasGap("A", "8 A"));        // previous entry unnumbered
   EXPECT_FALSE(hasGap("8 A", "B"));        // current entry unnumbered
 }
+
+// --- firstSortChar: jump-to-letter-group building block ---
+
+TEST(FirstSortChar, LettersLowercased) {
+  EXPECT_EQ(firstSortChar("Wodehouse"), 'w');
+  EXPECT_EQ(firstSortChar("abercrombie"), 'a');
+}
+
+TEST(FirstSortChar, DigitsCollapseToOneGroup) {
+  EXPECT_EQ(firstSortChar("4 Sharpe's Trafalgar.epub"), '0');
+  EXPECT_EQ(firstSortChar("14 Command.epub"), '0');
+}
+
+TEST(FirstSortChar, SkipsLeadingPunctuationAndSpace) {
+  EXPECT_EQ(firstSortChar("  Murakami"), 'm');
+  EXPECT_EQ(firstSortChar("'Tis - Frank McCourt.epub"), 't');
+}
+
+TEST(FirstSortChar, NoAlphanumericReturnsZero) {
+  EXPECT_EQ(firstSortChar("---"), 0);
+  EXPECT_EQ(firstSortChar(""), 0);
+  EXPECT_EQ(firstSortChar(nullptr), 0);
+}
