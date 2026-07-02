@@ -684,6 +684,22 @@ void Epub::writeContentKeySidecar() const {
   writeSidecarAtomic(keyFile, serializeSidecar(key, filepath, currentSize));
 }
 
+void Epub::rewriteContentKeySourcePath(const std::string& cacheDir, const std::string& newSourcePath) {
+  const std::string keyFile = cacheDir + "/content.key";
+  SidecarInfo info;
+  if (!readContentKeySidecar(keyFile, info)) {
+    return;  // no sidecar / unparseable -> nothing to fix
+  }
+  if (info.sourcePath == newSourcePath) {
+    return;  // already correct
+  }
+  // Refresh the size too (the file is the same book, just at a new path, so its
+  // size is unchanged, but re-reading keeps a legacy 0 from persisting).
+  const uint64_t size = epubFileSize(newSourcePath);
+  writeSidecarAtomic(keyFile, serializeSidecar(info.key, newSourcePath, size));
+  LOG_DBG("EBP", "Rewrote content.key source path in %s -> %s", cacheDir.c_str(), newSourcePath.c_str());
+}
+
 namespace {
 // Clears a pre-created destination cache dir so an orphan can be renamed into
 // its place. SdFat's FAT rename() FAILS when the destination path already

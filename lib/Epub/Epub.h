@@ -75,6 +75,12 @@ class Epub {
   explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
   static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
+  // Rewrites the content.key sidecar in cacheDir to point at newSourcePath (and
+  // refreshes the F5 size field) after the backing file + cache dir were moved.
+  // Keeps the existing content key. No-op if the sidecar is missing/unparseable.
+  // Used by the move-to-/Read flow so a finished book's live cache can't be
+  // adopted (stolen) by a same-title duplicate via a stale source path. (F13)
+  static void rewriteContentKeySourcePath(const std::string& cacheDir, const std::string& newSourcePath);
   // True when a metadata cache already exists for this book, i.e. load() will
   // hit the fast path instead of rebuilding. Cheap: no parsing, just a stat.
   static bool hasCache(const std::string& filepath, const std::string& cacheDir);

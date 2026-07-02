@@ -46,6 +46,11 @@ bool migrateMovedEpubState(const std::string& oldPath, const std::string& newPat
       LOG_ERR("BookMove", "Failed to rename cache dir %s -> %s (non-fatal)", oldCachePath.c_str(),
               newCachePath.c_str());
       ok = false;
+    } else {
+      // Repoint the content.key sidecar at the new source path (F13). Otherwise
+      // the moved book's live cache keeps the pre-move path, which no longer
+      // exists, making the cache adoptable (stealable) by a same-title duplicate.
+      Epub::rewriteContentKeySourcePath(newCachePath, newPath);
     }
   }
 
