@@ -12,7 +12,13 @@
 
 namespace {
 constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
-constexpr uint8_t BOOK_CACHE_VERSION = 9;          // v9: guide "start" ref honored as text fallback (CrossInked)
+// CrossInked reserves the disjoint version range 0x80|N for fork cache formats
+// so upstream's sequential versions (which will reach 9 for a *different* format
+// change) can never silently collide with ours in either direction. 0x89 == the
+// fork's 9th format: guide "start" ref honored as text fallback, with #fragments
+// stripped from the stored textReferenceHref (F20). Bumping from the old v9
+// invalidates existing caches once on next flash; they rebuild cleanly on open.
+constexpr uint8_t BOOK_CACHE_VERSION = 0x89;
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";

@@ -389,8 +389,17 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // Prefer an explicit guide "text" reference; fall back to a "start" reference
   // (common in EPUB2/Project Gutenberg files that omit "text") so the book opens
   // at its intended first page rather than spine 0 (title/legal front matter).
-  bookMetadata.textReferenceHref =
-      opfParser.textReferenceHref.empty() ? opfParser.startReferenceHref : opfParser.textReferenceHref;
+  // Strip any #fragment (F20): the parser keeps the raw href, but Project
+  // Gutenberg EPUB2 emits start hrefs like "...-h.htm#pgepubid00000" and
+  // getSpineIndexForTextReference does an exact compare against fragment-free
+  // spine hrefs -- so a fragment guaranteed no match and the fallback no-op'd
+  // for exactly the books it targets. (CrossInked)
+  {
+    const std::string& ref =
+        opfParser.textReferenceHref.empty() ? opfParser.startReferenceHref : opfParser.textReferenceHref;
+    const size_t hash = ref.find('#');
+    bookMetadata.textReferenceHref = (hash == std::string::npos) ? ref : ref.substr(0, hash);
+  }
 
   if (!opfParser.tocNcxPath.empty()) {
     tocNcxItem = opfParser.tocNcxPath;
