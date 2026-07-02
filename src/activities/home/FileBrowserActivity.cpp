@@ -876,17 +876,29 @@ void FileBrowserActivity::loop() {
 
   // Hold-to-jump: in Books mode, jump by first-letter group (far more useful for a
   // large sorted library); the firmware picker keeps fixed-page jumping. (CrossInked)
+  //
+  // The letter scan mutates the shared index-row cache and the single FileIndex handle
+  // that render() reads concurrently on the render task (loop() runs without the render
+  // lock), so in indexed folders it must hold RenderLock while it scans — mirroring the
+  // "Loading" popup guard in loadFiles(). PickFirmware page-jumping is pure arithmetic on
+  // selectorIndex and needs no lock. (CrossInked)
   buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = (mode == Mode::Books)
-                        ? letterJumpIndex(true)
-                        : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    if (mode == Mode::Books) {
+      RenderLock lock(*this);
+      selectorIndex = letterJumpIndex(true);
+    } else {
+      selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    }
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = (mode == Mode::Books)
-                        ? letterJumpIndex(false)
-                        : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    if (mode == Mode::Books) {
+      RenderLock lock(*this);
+      selectorIndex = letterJumpIndex(false);
+    } else {
+      selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    }
     requestUpdate();
   });
 }
