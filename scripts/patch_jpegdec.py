@@ -33,7 +33,19 @@ def patch_jpegdec(env):
     patches = _patch_files()
     for env_dir in os.listdir(libdeps_dir):
         jpeg_dir = os.path.join(libdeps_dir, env_dir, "JPEGDEC")
+        if not os.path.isdir(jpeg_dir):
+            continue
+        # (CrossInked, L2) A JPEGDEC checkout without a .git tree cannot be patched
+        # via `git apply` -- warn loudly (naming the dir) instead of skipping silently,
+        # so an unpatched decoder that can wild-pointer on progressive JPEGs does not
+        # slip into a build unnoticed. Do not fail the build (some checkouts legitimately
+        # lack .git, e.g. a vendored/exported copy).
         if not os.path.isdir(os.path.join(jpeg_dir, ".git")):
+            sys.stderr.write(
+                "WARNING: JPEGDEC at %s has no .git tree -- CANNOT apply the "
+                "progressive-JPEG safety patches; this build's decoder is UNPATCHED "
+                "and may crash on progressive (SOF2) JPEGs.\n" % jpeg_dir
+            )
             continue
         for patch in patches:
             _apply_one(jpeg_dir, patch)
