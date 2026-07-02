@@ -67,6 +67,9 @@ class Epub {
   // True when storedPath still refers to a live *other* file (so the orphan is not
   // orphaned and must not be stolen). Handles case-only renames of this book. (F6)
   bool storedPathIsLiveOriginal(const std::string& storedPath) const;
+  // Edition guard for adoption (F5): the sidecar's recorded source size must match
+  // the current file. A 0 (legacy sidecar) or unreadable size is allowed. (CrossInked)
+  bool sidecarSizeMatchesForAdoption(uint64_t sidecarSize) const;
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);

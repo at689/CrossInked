@@ -158,6 +158,73 @@ class CoverImageRefScanner final : public Print {
     }
   }
 };
+
+// content.key sidecar parsing/sizing (CrossInked). Defined here so both
+// writeContentKeySidecar() and the adoption scan can use them.
+//
+// Sidecar format (line-based, backward-tolerant):
+//   line 1: fnvHash64(title \x1f author)   (decimal)
+//   line 2: source EPUB path
+//   line 3 (optional, F5): source EPUB file size in bytes (decimal)
+// A missing or unparseable size line yields sourceSize == 0 ("legacy" sidecar).
+struct SidecarInfo {
+  uint64_t key = 0;
+  std::string sourcePath;
+  uint64_t sourceSize = 0;  // 0 == absent/legacy
+};
+
+// Returns false when the sidecar is missing/garbage or the key is 0 (see F12:
+// strtoull yields 0 on garbage, and a stored 0 must never match a real key).
+bool readContentKeySidecar(const std::string& keyFilePath, SidecarInfo& out) {
+  if (!Storage.exists(keyFilePath.c_str())) return false;
+  std::string content(Storage.readFile(keyFilePath.c_str()).c_str());
+  const size_t nl = content.find('\n');
+  if (nl == std::string::npos) return false;
+  const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
+  if (storedKey == 0) return false;  // garbage or absent key -> never adoptable
+
+  std::string rest = content.substr(nl + 1);
+  std::string storedPath = rest;
+  std::string sizeLine;
+  const size_t nl2 = rest.find('\n');
+  if (nl2 != std::string::npos) {
+    storedPath = rest.substr(0, nl2);
+    sizeLine = rest.substr(nl2 + 1);
+    const size_t nl3 = sizeLine.find('\n');
+    if (nl3 != std::string::npos) sizeLine = sizeLine.substr(0, nl3);
+  }
+  while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
+
+  uint64_t storedSize = 0;
+  if (!sizeLine.empty()) {
+    // Trim and require all-digits so a non-numeric line reads as legacy (0), not garbage.
+    while (!sizeLine.empty() && (sizeLine.back() == '\n' || sizeLine.back() == '\r' || sizeLine.back() == ' '))
+      sizeLine.pop_back();
+    bool allDigits = !sizeLine.empty();
+    for (const char c : sizeLine) {
+      if (c < '0' || c > '9') {
+        allDigits = false;
+        break;
+      }
+    }
+    if (allDigits) storedSize = strtoull(sizeLine.c_str(), nullptr, 10);
+  }
+
+  out.key = storedKey;
+  out.sourcePath = std::move(storedPath);
+  out.sourceSize = storedSize;
+  return true;
+}
+
+// Size in bytes of the EPUB backing file at path, or 0 if it can't be read
+// (a 0 result is treated as "unknown" and never blocks adoption).
+uint64_t epubFileSize(const std::string& path) {
+  FsFile f;
+  if (!Storage.openFileForRead("EBP", path, f)) return 0;
+  const uint64_t sz = f.fileSize64();
+  f.close();
+  return sz;
+}
 }  // namespace
 
 Epub::Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
@@ -556,14 +623,14 @@ Epub::CssParseStatus Epub::parseCssFiles(const bool forceRebuild) const {
 void Epub::writeContentKeySidecar() const {
   if (bookMetadataCache == nullptr) return;
   const std::string keyFile = cachePath + "/content.key";
-  // Skip the write if the sidecar already records the current source path.
+  const uint64_t currentSize = epubFileSize(filepath);
+  // Skip the write only when the sidecar already records the current source path
+  // AND already carries a size (so legacy sidecars get upgraded with a size
+  // field on their next open, strengthening the F5 edition check over time).
   if (Storage.exists(keyFile.c_str())) {
-    std::string existing(Storage.readFile(keyFile.c_str()).c_str());
-    const size_t nl = existing.find('\n');
-    if (nl != std::string::npos) {
-      std::string p = existing.substr(nl + 1);
-      while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
-      if (p == filepath) return;
+    SidecarInfo existing;
+    if (readContentKeySidecar(keyFile, existing) && existing.sourcePath == filepath && existing.sourceSize != 0) {
+      return;
     }
   }
   const auto& m = bookMetadataCache->coreMetadata;
@@ -572,6 +639,10 @@ void Epub::writeContentKeySidecar() const {
   String out(std::to_string(key).c_str());
   out += "\n";
   out += filepath.c_str();
+  out += "\n";
+  // Line 3 (F5): source file size for the edition check. Written as 0 only if
+  // the file size can't be read; readers treat 0 as "legacy" and skip the guard.
+  out += std::to_string(currentSize).c_str();
   out += "\n";
   Storage.writeFile(keyFile.c_str(), out);
 }
@@ -655,25 +726,6 @@ constexpr size_t kMaxOrphanIndex = 64;
 bool s_orphansScanned = false;
 bool s_orphansOverflowed = false;  // too many orphans -> fall back to full scan
 std::vector<OrphanEntry> s_orphans;
-
-// Parse a content.key sidecar's first line (the stored key). Returns false when
-// the sidecar is missing/garbage or the key is 0 (see F12: strtoull yields 0 on
-// garbage, and a stored 0 must never match a real key).
-bool readOrphanSidecarKey(const std::string& keyFilePath, uint64_t& outKey, std::string& outSourcePath) {
-  if (!Storage.exists(keyFilePath.c_str())) return false;
-  std::string content(Storage.readFile(keyFilePath.c_str()).c_str());
-  const size_t nl = content.find('\n');
-  if (nl == std::string::npos) return false;
-  const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
-  if (storedKey == 0) return false;  // garbage or absent key -> never adoptable
-  std::string storedPath = content.substr(nl + 1);
-  const size_t nl2 = storedPath.find('\n');
-  if (nl2 != std::string::npos) storedPath = storedPath.substr(0, nl2);
-  while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
-  outKey = storedKey;
-  outSourcePath = std::move(storedPath);
-  return true;
-}
 }  // namespace
 
 // Case-insensitive ASCII path compare (F6): FAT LFN lookups are
@@ -703,6 +755,32 @@ bool Epub::storedPathIsLiveOriginal(const std::string& storedPath) const {
   return Storage.exists(storedPath.c_str());                     // some other file still holds this path
 }
 
+// Content check for adoption (F5): the title|author hash alone will match a
+// different edition of the same book (a normal Calibre re-export). Compare the
+// sidecar's recorded source size against the current file's size -- renames
+// preserve size, different editions almost never share an exact byte count.
+// A missing size field (legacy sidecar written before F5) is allowed with a
+// log: requiring a rebuild would strand reading progress for every book cached
+// before this flash, which is exactly the loss adoption exists to prevent.
+bool Epub::sidecarSizeMatchesForAdoption(uint64_t sidecarSize) const {
+  if (sidecarSize == 0) {
+    LOG_DBG("EBP", "Adopting via legacy sidecar (no size field) for %s", filepath.c_str());
+    return true;  // legacy sidecar -> allow (see rationale above)
+  }
+  const uint64_t currentSize = epubFileSize(filepath);
+  if (currentSize == 0) {
+    LOG_DBG("EBP", "Could not size %s; skipping size guard for adoption", filepath.c_str());
+    return true;  // unknown current size -> don't block on a read failure
+  }
+  if (currentSize != sidecarSize) {
+    LOG_INF("EBP", "Rejecting cache adoption: size mismatch (sidecar=%llu current=%llu) for %s",
+            static_cast<unsigned long long>(sidecarSize), static_cast<unsigned long long>(currentSize),
+            filepath.c_str());
+    return false;
+  }
+  return true;
+}
+
 void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName) {
   s_orphans.clear();
   s_orphansOverflowed = false;
@@ -723,9 +801,8 @@ void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName)
     const std::string entryName(name);
     if (entryName == ourName || entryName.rfind("epub_", 0) != 0) continue;
 
-    uint64_t storedKey = 0;
-    std::string storedPath;
-    if (!readOrphanSidecarKey(root + "/" + entryName + "/content.key", storedKey, storedPath)) continue;
+    SidecarInfo info;
+    if (!readContentKeySidecar(root + "/" + entryName + "/content.key", info)) continue;
     // Keep a candidate when it looks adoptable, i.e. NOT a live book sitting at
     // its own canonical home. A live, correctly-homed book has both an existing
     // source file AND a cache dir whose name matches cachePathForFilePath of the
@@ -734,8 +811,8 @@ void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName)
     // (b) dirs whose sidecar path is stale or case-mismatched (the F6 case-only
     // rename still resolves the old path via FAT's case-insensitive exists()).
     // The per-candidate storedPathIsLiveOriginal() check makes the final call.
-    const bool sourceExists = Storage.exists(storedPath.c_str());
-    const std::string canonicalHome = cachePathForFilePath(storedPath, root);
+    const bool sourceExists = Storage.exists(info.sourcePath.c_str());
+    const std::string canonicalHome = cachePathForFilePath(info.sourcePath, root);
     const bool atCanonicalHome = canonicalHome == (root + "/" + entryName);
     if (sourceExists && atCanonicalHome) continue;  // live book at home -> not adoptable
 
@@ -745,7 +822,7 @@ void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName)
       s_orphans.clear();
       break;
     }
-    s_orphans.push_back(OrphanEntry{storedKey, entryName});
+    s_orphans.push_back(OrphanEntry{info.key, entryName});
   }
   dir.close();
   LOG_DBG("EBP", "Built orphan-cache index: %zu candidate(s)", s_orphans.size());
@@ -799,11 +876,11 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
       if (!isDir) continue;
       const std::string entryName(name);
       if (entryName == ourName || entryName.rfind("epub_", 0) != 0) continue;
-      uint64_t storedKey = 0;
-      std::string storedPath;
-      if (!readOrphanSidecarKey(root + "/" + entryName + "/content.key", storedKey, storedPath)) continue;
-      if (storedKey != key) continue;
-      if (storedPathIsLiveOriginal(storedPath)) continue;
+      SidecarInfo info;
+      if (!readContentKeySidecar(root + "/" + entryName + "/content.key", info)) continue;
+      if (info.key != key) continue;
+      if (storedPathIsLiveOriginal(info.sourcePath)) continue;
+      if (!sidecarSizeMatchesForAdoption(info.sourceSize)) continue;  // wrong edition -> don't adopt
       adoptFrom = root + "/" + entryName;
       break;
     }
@@ -811,16 +888,17 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
   } else {
     // Fast path: consult the in-RAM index, re-verifying the winning candidate's
     // sidecar before committing (the index only stored the key, so re-read to
-    // confirm the source is still gone and guard against a case-only rename).
+    // confirm the source is still gone, the size still matches, and guard against
+    // a case-only rename).
     for (size_t i = 0; i < s_orphans.size(); i++) {
       if (s_orphans[i].key != key) continue;
-      uint64_t storedKey = 0;
-      std::string storedPath;
+      SidecarInfo info;
       const std::string dirPath = root + "/" + s_orphans[i].dirName;
-      if (!readOrphanSidecarKey(dirPath + "/content.key", storedKey, storedPath) || storedKey != key) {
+      if (!readContentKeySidecar(dirPath + "/content.key", info) || info.key != key) {
         continue;
       }
-      if (storedPathIsLiveOriginal(storedPath)) continue;
+      if (storedPathIsLiveOriginal(info.sourcePath)) continue;
+      if (!sidecarSizeMatchesForAdoption(info.sourceSize)) continue;  // wrong edition -> don't adopt
       adoptFrom = dirPath;
       adoptedIndexSlot = i;
       break;
