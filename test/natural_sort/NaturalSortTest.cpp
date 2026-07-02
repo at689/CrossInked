@@ -118,3 +118,41 @@ TEST(FirstSortChar, NoAlphanumericReturnsZero) {
   EXPECT_EQ(firstSortChar(""), 0);
   EXPECT_EQ(firstSortChar(nullptr), 0);
 }
+
+// --- firstSortChar: UTF-8 decoding + Latin accent folding (F17) ---
+
+TEST(FirstSortChar, FoldsLatin1AccentsToBaseLetter) {
+  // Previously these skipped the multibyte lead bytes and returned a garbage
+  // ASCII letter from later in the name (e.g. 'Émile' -> 'm').
+  EXPECT_EQ(firstSortChar("\xC3\x89" "mile Zola - La Bete Humaine.epub"), 'e');  // É
+  EXPECT_EQ(firstSortChar("\xC3\x89" "ric-Emmanuel Schmitt.epub"), 'e');         // É
+  EXPECT_EQ(firstSortChar("\xC3\x98" "rsted - A Biography.epub"), 'o');          // Ø
+  EXPECT_EQ(firstSortChar("\xC3\xA9" "douard Louis.epub"), 'e');                 // é
+  EXPECT_EQ(firstSortChar("\xC3\x87" " elik.epub"), 'c');                        // Ç
+  EXPECT_EQ(firstSortChar("\xC3\xBC" "ber Alles.epub"), 'u');                    // ü
+}
+
+TEST(FirstSortChar, FoldsLatinExtendedAToBaseLetter) {
+  EXPECT_EQ(firstSortChar("\xC5\xA0" "kvorecky - Josef.epub"), 's');  // Š (U+0160)
+  EXPECT_EQ(firstSortChar("\xC5\xBD" " ivkovic.epub"), 'z');          // Ž (U+017D)
+  EXPECT_EQ(firstSortChar("\xC5\x81" "ukasz.epub"), 'l');             // Ł (U+0141)
+  EXPECT_EQ(firstSortChar("\xC4\x8C" "apek - Karel.epub"), 'c');      // Č (U+010C)
+}
+
+TEST(FirstSortChar, NonLatinCodepointsBucketTogether) {
+  // Cyrillic, CJK, and non-foldable Latin (ß) all land in the single NON_ASCII_GROUP
+  // bucket so they cluster instead of scattering under arbitrary letters.
+  EXPECT_EQ(firstSortChar("\xD0\x90\xD0\xBD\xD0\xBD\xD0\xB0.epub"), NON_ASCII_GROUP);  // Cyrillic Анна
+  EXPECT_EQ(firstSortChar("\xE6\x9D\x91\xE4\xB8\x8A.epub"), NON_ASCII_GROUP);          // CJK 村上
+  EXPECT_EQ(firstSortChar("\xC3\x9F klar.epub"), NON_ASCII_GROUP);                     // ß (no base letter)
+}
+
+TEST(FirstSortChar, LeadingPunctuationBeforeAccentIsSkipped) {
+  EXPECT_EQ(firstSortChar("  \xC3\x89mile.epub"), 'e');  // spaces then É
+  EXPECT_EQ(firstSortChar("'\xC3\x89tranger.epub"), 'e');
+}
+
+TEST(FirstSortChar, AsciiStillWinsBeforeLaterAccent) {
+  // An ASCII letter earlier in the string still decides the group.
+  EXPECT_EQ(firstSortChar("Andr\xC3\xA9 Gide.epub"), 'a');  // 'A' before é
+}

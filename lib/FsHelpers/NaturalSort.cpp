@@ -107,12 +107,111 @@ SeriesNumber parseSeriesNumber(const char* name) {
   return result;
 }
 
+namespace {
+
+// Decode one UTF-8 codepoint starting at `s` (which must be a lead byte >= 0xC0).
+// Writes the number of bytes consumed to `len` (>= 1) and returns the codepoint,
+// or 0 on a malformed/truncated sequence (len is then set past the bad byte). (CrossInked)
+uint32_t decodeCodepoint(const char* s, int& len) {
+  const unsigned char c0 = static_cast<unsigned char>(s[0]);
+  int expect;
+  uint32_t cp;
+  if ((c0 & 0xE0) == 0xC0) {
+    expect = 1;
+    cp = c0 & 0x1F;
+  } else if ((c0 & 0xF0) == 0xE0) {
+    expect = 2;
+    cp = c0 & 0x0F;
+  } else if ((c0 & 0xF8) == 0xF0) {
+    expect = 3;
+    cp = c0 & 0x07;
+  } else {
+    len = 1;  // 0xC0/0xC1/0xF8.. or stray continuation byte — skip it
+    return 0;
+  }
+  for (int i = 1; i <= expect; ++i) {
+    const unsigned char cc = static_cast<unsigned char>(s[i]);
+    if ((cc & 0xC0) != 0x80) {  // truncated
+      len = i;
+      return 0;
+    }
+    cp = (cp << 6) | (cc & 0x3F);
+  }
+  len = expect + 1;
+  return cp;
+}
+
+// Fold an accented Latin codepoint (Latin-1 Supplement U+00C0-U+00FF and
+// Latin Extended-A U+0100-U+017F) to its base ASCII letter for grouping, e.g.
+// É/è->e, Ø/ø->o, š/Š->s, Ç->c. Returns 0 when there is no sensible base letter
+// (ß, ÷, ×, æ ligatures etc.), letting the caller bucket it with other
+// non-ASCII names. Kept as a compact range-fold, not a Unicode library. (CrossInked)
+char foldLatinToAscii(uint32_t cp) {
+  // Latin-1 Supplement letters.
+  if (cp >= 0x00C0 && cp <= 0x00FF) {
+    static const char kLatin1[64] = {
+        //   C0   C1   C2   C3   C4   C5   C6   C7   C8   C9   CA   CB   CC   CD   CE   CF
+        'a', 'a', 'a', 'a', 'a', 'a', 0,   'c', 'e', 'e', 'e', 'e', 'i', 'i', 'i', 'i',
+        //   D0   D1   D2   D3   D4   D5   D6   D7   D8   D9   DA   DB   DC   DD   DE   DF
+        'd', 'n', 'o', 'o', 'o', 'o', 'o', 0,   'o', 'u', 'u', 'u', 'u', 'y', 0,   0,
+        //   E0   E1   E2   E3   E4   E5   E6   E7   E8   E9   EA   EB   EC   ED   EE   EF
+        'a', 'a', 'a', 'a', 'a', 'a', 0,   'c', 'e', 'e', 'e', 'e', 'i', 'i', 'i', 'i',
+        //   F0   F1   F2   F3   F4   F5   F6   F7   F8   F9   FA   FB   FC   FD   FE   FF
+        'd', 'n', 'o', 'o', 'o', 'o', 'o', 0,   'o', 'u', 'u', 'u', 'u', 'y', 0,   'y'};
+    return kLatin1[cp - 0x00C0];
+  }
+  // Latin Extended-A: each base letter occupies a run of accented variants. The
+  // block is laid out in ASCII-alphabetical order, so map by sub-range.
+  if (cp >= 0x0100 && cp <= 0x017F) {
+    if (cp <= 0x0105) return 'a';  // Ā ā Ă ă Ą ą
+    if (cp <= 0x010D) return 'c';  // Ć ć Ĉ ĉ Ċ ċ Č č
+    if (cp <= 0x0111) return 'd';  // Ď ď Đ đ
+    if (cp <= 0x011B) return 'e';  // Ē..ě
+    if (cp <= 0x0123) return 'g';  // Ĝ..ģ
+    if (cp <= 0x0127) return 'h';  // Ĥ..ħ
+    if (cp <= 0x0133) return 'i';  // Ĩ..ı, IJ ligature Ĳ ĳ
+    if (cp <= 0x0135) return 'j';  // Ĵ ĵ
+    if (cp <= 0x0137) return 'k';  // Ķ ķ
+    if (cp <= 0x0142) return 'l';  // ĸ Ĺ..ł
+    if (cp <= 0x0148) return 'n';  // Ń..ň
+    if (cp <= 0x0151) return 'o';  // ŉ Ŋ ŋ Ō..ő
+    if (cp <= 0x0153) return 'o';  // OE ligature Œ œ
+    if (cp <= 0x0159) return 'r';  // Ŕ..ř
+    if (cp <= 0x0161) return 's';  // Ś..š
+    if (cp <= 0x0167) return 't';  // Ţ..ŧ
+    if (cp <= 0x0173) return 'u';  // Ũ..ų
+    if (cp <= 0x0175) return 'w';  // Ŵ ŵ
+    if (cp <= 0x0178) return 'y';  // Ŷ ŷ Ÿ
+    return 'z';                    // Ź..ž
+  }
+  return 0;
+}
+
+}  // namespace
+
 char firstSortChar(const char* name) {
   if (name == nullptr) return 0;
-  for (const char* s = name; *s; ++s) {
+  const char* s = name;
+  while (*s) {
     const unsigned char c = static_cast<unsigned char>(*s);
-    if (isdigit(c)) return '0';  // all numbered entries collapse to one group
-    if (isalpha(c)) return static_cast<char>(tolower(c));
+    if (c < 0x80) {
+      if (isdigit(c)) return '0';  // all numbered entries collapse to one group
+      if (isalpha(c)) return static_cast<char>(tolower(c));
+      ++s;  // ASCII punctuation/space: skip to the first real sort char
+      continue;
+    }
+    // Multibyte lead: decode and try to fold an accented Latin letter to its base.
+    int len = 1;
+    const uint32_t cp = decodeCodepoint(s, len);
+    if (cp != 0) {
+      const char base = foldLatinToAscii(cp);
+      if (base != 0) return base;
+      // Any other decodable non-ASCII (CJK, Cyrillic, ß, ligatures...) forms one
+      // stable bucket so such names cluster together rather than under a garbage
+      // ASCII letter picked from later in the name. (CrossInked)
+      return NON_ASCII_GROUP;
+    }
+    s += len;  // malformed sequence: skip past it and keep looking
   }
   return 0;
 }

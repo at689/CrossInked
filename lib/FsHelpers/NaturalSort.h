@@ -24,9 +24,18 @@ struct SeriesNumber {
 // number, so titles that merely start with a digit word still parse their prefix.
 SeriesNumber parseSeriesNumber(const char* name);
 
-// First sort-relevant character of a name, lowercased: the first ASCII letter or
-// digit (all digits collapse to '0' so numbered entries form one group). Returns
-// 0 for names with no alphanumeric char. Used for jump-to-letter-group navigation.
+// Group key returned by firstSortChar for names whose first sort-relevant
+// codepoint is non-ASCII and has no Latin base letter (CJK, Cyrillic, ß, etc.).
+// 0x7F sorts after every ASCII letter, so these names form one stable trailing
+// group instead of scattering under arbitrary letters. (CrossInked)
+constexpr char NON_ASCII_GROUP = 0x7F;
+
+// First sort-relevant character of a name, lowercased, for jump-to-letter-group
+// navigation. Decodes the first UTF-8 codepoint (not raw bytes): the first ASCII
+// letter (lowercased) or digit ('0', so all numbered entries form one group);
+// accented Latin letters fold to their base letter (É->e, Ø->o, š->s); any other
+// non-ASCII codepoint returns NON_ASCII_GROUP. Leading punctuation/space is
+// skipped. Returns 0 for names with no sort-relevant char. (CrossInked)
 char firstSortChar(const char* name);
 
 }  // namespace FsHelpers
