@@ -20,6 +20,7 @@ constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
 // invalidates existing caches once on next flash; they rebuild cleanly on open.
 constexpr uint8_t BOOK_CACHE_VERSION = 0x89;
 constexpr char bookBinFile[] = "/book.bin";
+constexpr char tmpBookBinFile[] = "/book.bin.tmp";  // crash-consistent build target (CrossInked, I8)
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
 }  // namespace
@@ -109,8 +110,17 @@ bool BookMetadataCache::endWrite() {
 }
 
 bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata) {
+  // Crash consistency (I8): build into book.bin.tmp and rename it over book.bin
+  // only after the final close. Power loss mid-build then leaves a stale/absent
+  // book.bin (rebuilt on next open) instead of a header-valid file whose LUT and
+  // spine/TOC regions are truncated -- which would pass version checks forever
+  // while spine lookups read garbage, recoverable only by a manual cache clear.
+  const std::string tmpBookBinPath = cachePath + tmpBookBinFile;
+  if (Storage.exists(tmpBookBinPath.c_str())) {
+    Storage.remove(tmpBookBinPath.c_str());
+  }
   // Open all three files, writing to meta, reading from spine and toc
-  if (!Storage.openFileForWrite("BMC", cachePath + bookBinFile, bookFile)) {
+  if (!Storage.openFileForWrite("BMC", tmpBookBinPath, bookFile)) {
     return false;
   }
 
@@ -292,9 +302,27 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   }
 
   // Explicit close() required: member variables persist beyond function scope
-  bookFile.close();
+  if (!bookFile.close()) {
+    LOG_ERR("BMC", "Failed to close book.bin temp; discarding");
+    spineFile.close();
+    tocFile.close();
+    Storage.remove(tmpBookBinPath.c_str());
+    return false;
+  }
   spineFile.close();
   tocFile.close();
+
+  // Atomically swap the completed temp into place (SdFat rename fails onto an
+  // existing path, so remove any stale book.bin first).
+  const std::string bookBinPath = cachePath + bookBinFile;
+  if (Storage.exists(bookBinPath.c_str())) {
+    Storage.remove(bookBinPath.c_str());
+  }
+  if (!Storage.rename(tmpBookBinPath.c_str(), bookBinPath.c_str())) {
+    LOG_ERR("BMC", "Failed to commit book.bin from temp: %s", tmpBookBinPath.c_str());
+    Storage.remove(tmpBookBinPath.c_str());
+    return false;
+  }
 
   LOG_DBG("BMC", "Successfully built book.bin");
   return true;
@@ -308,6 +336,10 @@ bool BookMetadataCache::cleanupTmpFiles() const {
   const auto tocBinFile = cachePath + tmpTocBinFile;
   if (Storage.exists(tocBinFile.c_str())) {
     Storage.remove(tocBinFile.c_str());
+  }
+  const auto bookBinTmp = cachePath + tmpBookBinFile;  // I8: discard a partial build target
+  if (Storage.exists(bookBinTmp.c_str())) {
+    Storage.remove(bookBinTmp.c_str());
   }
   return true;
 }
@@ -439,6 +471,23 @@ bool BookMetadataCache::load() {
       !serialization::tryReadString(bookFile, coreMetadata.coverItemHref) ||
       !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref)) {
     LOG_DBG("BMC", "Cache metadata is truncated");
+    bookFile.close();
+    Storage.remove(bookBinPath.c_str());
+    return false;
+  }
+
+  // Crash-consistency guard (I8): the header parsed cleanly, but a build
+  // interrupted after the header yet before the LUT/entry regions were written
+  // leaves a file that passes every check above while getSpineEntry() seeks past
+  // EOF into garbage. Require the file to at least span the LUT (one uint32 per
+  // spine + toc entry). Reuse the existing delete-and-rebuild path. (Bounds are
+  // computed in 64-bit to avoid overflow on absurd counts.)
+  const uint64_t requiredSize =
+      static_cast<uint64_t>(lutOffset) + static_cast<uint64_t>(sizeof(uint32_t)) *
+                                             (static_cast<uint64_t>(spineCount) + static_cast<uint64_t>(tocCount));
+  if (static_cast<uint64_t>(bookFile.size()) < requiredSize) {
+    LOG_DBG("BMC", "Cache LUT is truncated (size=%zu < required=%llu); rebuilding", bookFile.size(),
+            static_cast<unsigned long long>(requiredSize));
     bookFile.close();
     Storage.remove(bookBinPath.c_str());
     return false;
