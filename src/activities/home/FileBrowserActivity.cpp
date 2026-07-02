@@ -1038,12 +1038,16 @@ void FileBrowserActivity::render(RenderLock&&) {
       // Series-gap marker: when this numbered file's number jumps past the previous
       // numbered file's (e.g. "6" then "8"), flag the missing number(s) as "[7]" or
       // "[13-14]". Decimals ("16.5") and omnibus ranges ("1-3") are handled by
-      // parseSeriesNumber so they don't produce false gaps. (CrossInked)
-      if (SETTINGS.flagSeriesGaps != 0 && index > 0 && entry.back() != '/') {
+      // parseSeriesNumber so they don't produce false gaps. Books mode only, matching
+      // the jump-to-letter gate above: numbered firmware dumps ("2.bin", "4.bin") in
+      // the PickFirmware picker and numbered wallpapers in sleep folders must not show
+      // meaningless "[3]" markers. (CrossInked)
+      if (mode == Mode::Books && SETTINGS.flagSeriesGaps != 0 && index > 0 && entry.back() != '/' &&
+          hasFileMetadata(entry)) {
         const char* prevRaw = entryNameAt(index - 1);
         if (prevRaw != nullptr && prevRaw[0] != '\0') {
           const std::string prevEntry(prevRaw);
-          if (prevEntry.back() != '/') {
+          if (prevEntry.back() != '/' && hasFileMetadata(prevEntry)) {
             const FsHelpers::SeriesNumber a = FsHelpers::parseSeriesNumber(prevEntry.c_str());
             const FsHelpers::SeriesNumber b = FsHelpers::parseSeriesNumber(entry.c_str());
             if (a.numbered && b.numbered && b.start > a.end + 1) {
