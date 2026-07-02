@@ -140,7 +140,9 @@ bool RecentBooksStore::loadFromFile() {
   if (Storage.exists(RECENT_BOOKS_FILE_JSON)) {
     String json = Storage.readFile(RECENT_BOOKS_FILE_JSON);
     if (!json.isEmpty()) {
-      return JsonSettingsIO::loadRecentBooks(*this, json.c_str());
+      const bool loaded = JsonSettingsIO::loadRecentBooks(*this, json.c_str());
+      pruneDeadEntriesOnLoad();
+      return loaded;
     }
   }
 
@@ -150,11 +152,29 @@ bool RecentBooksStore::loadFromFile() {
       saveToFile();
       Storage.rename(RECENT_BOOKS_FILE_BIN, RECENT_BOOKS_FILE_BAK);
       LOG_DBG("RBS", "Migrated recent.bin to recent.json");
+      pruneDeadEntriesOnLoad();
       return true;
     }
   }
 
   return false;
+}
+
+// Drop recent entries whose backing file no longer exists and persist the
+// result. (CrossInked, F14) When cache adoption (#5) repoints a renamed book's
+// cache to the new path, the RecentBooks entry still names the dead old path,
+// so the book silently vanishes from Continue Reading even though its progress
+// survived in the adopted cache. Pruning ghosts here keeps the recents list
+// honest, and the renamed book re-enters recents the next time it is opened
+// (with progress intact). Chosen over teaching lib/Epub to signal src/ because
+// it is the minimal change that keeps the lib/->src/ dependency direction clean.
+void RecentBooksStore::pruneDeadEntriesOnLoad() {
+  if (pruneMissing()) {
+    LOG_DBG("RBS", "Pruned recent-book entries with missing backing files");
+    if (!saveToFile()) {
+      LOG_ERR("RBS", "Failed to persist pruned recent-books list");
+    }
+  }
 }
 
 bool RecentBooksStore::loadFromBinaryFile() {

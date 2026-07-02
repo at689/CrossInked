@@ -77,6 +77,8 @@ class RecentBooksStore {
 
  private:
   bool loadFromBinaryFile();
+  // Prunes entries with missing backing files and persists. (CrossInked, F14)
+  void pruneDeadEntriesOnLoad();
 };
 
 // Helper macro to access recent books store
