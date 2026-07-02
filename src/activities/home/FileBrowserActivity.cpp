@@ -244,12 +244,26 @@ size_t FileBrowserActivity::letterJumpIndex(bool forward) {
   return static_cast<size_t>(k);
 }
 
+void FileBrowserActivity::flushLastBrowsePath() {
+  // Write the deferred lastBrowsePath to state.json, if it changed during this
+  // session. Cheap no-op when nothing was navigated. (CrossInked)
+  if (!lastBrowsePathDirty) return;
+  lastBrowsePathDirty = false;
+  if (!APP_STATE.saveToFile()) {
+    LOG_ERR("FileBrowser", "Failed to persist lastBrowsePath: %s", APP_STATE.lastBrowsePath.c_str());
+  }
+}
+
 void FileBrowserActivity::loadFiles() {
   // Remember the last folder browsed so "Browse Files" from Home reopens here
-  // next time instead of the SD root (deep trees are tedious to re-descend). (CrossInked)
+  // next time instead of the SD root (deep trees are tedious to re-descend).
+  // Only the LAST folder before leaving the browser is ever consumed (Home >
+  // Browse Files), so update it in RAM here and mark it dirty; the actual
+  // state.json write is deferred to onExit() to keep the ~15-40ms SD write and
+  // its power-loss corruption window off the per-navigation hot path. (CrossInked)
   if (mode == Mode::Books && basepath != APP_STATE.lastBrowsePath) {
     APP_STATE.lastBrowsePath = basepath;
-    APP_STATE.saveToFile();
+    lastBrowsePathDirty = true;
   }
   usingIndex = false;
   clearIndexNameCache();
@@ -374,6 +388,10 @@ void FileBrowserActivity::onEnter() {
 
 void FileBrowserActivity::onExit() {
   Activity::onExit();
+  // Persist the last-browsed folder now (once per browsing session) rather than on
+  // every navigation. onExit() fires exactly when the value becomes meaningful: the
+  // browser closing to Home or being replaced by the reader when a book is opened. (CrossInked)
+  flushLastBrowsePath();
   files.clear();
   fileNameBuffer.reset();
   fileIndex.reset();

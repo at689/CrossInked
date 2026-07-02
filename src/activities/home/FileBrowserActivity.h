@@ -59,9 +59,14 @@ class FileBrowserActivity final : public Activity {
   std::array<size_t, INDEX_ROW_CACHE_SIZE> indexCachedRows{};
   bool usingIndex = false;
   bool fileListMemoryLimited = false;
+  // Set when lastBrowsePath changed this session; flushed to state.json on exit
+  // instead of on every navigation, to keep the SD write off the hot path. (CrossInked)
+  bool lastBrowsePathDirty = false;
 
   // Data loading
   void clearIndexNameCache();
+  // Persist the deferred lastBrowsePath change to state.json (once per session). (CrossInked)
+  void flushLastBrowsePath();
   void loadFiles();
   bool loadFilesIntoVector(size_t cap, bool& overflow);
   size_t entryCount() const;

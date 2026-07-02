@@ -4,6 +4,7 @@
 #ifdef SIMULATOR
 #include <ArduinoJsonStringCompat.h>
 #endif
+#include <AtomicFile.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
@@ -122,7 +123,7 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
 
   String json;
   serializeJson(doc, json);
-  return Storage.writeFile(path, json);
+  return FsHelpers::writeAtomically(path, json, "JsonIO");
 }
 
 bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
@@ -218,7 +219,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 
   String json;
   serializeJson(doc, json);
-  return Storage.writeFile(path, json);
+  return FsHelpers::writeAtomically(path, json, "JsonIO");
 }
 
 bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool* needsResave) {
@@ -432,7 +433,7 @@ bool JsonSettingsIO::saveWifi(const WifiCredentialStore& store, const char* path
 
   String json;
   serializeJson(doc, json);
-  return Storage.writeFile(path, json);
+  return FsHelpers::writeAtomically(path, json, "JsonIO");
 }
 
 bool JsonSettingsIO::loadWifi(WifiCredentialStore& store, const char* json, bool* needsResave) {
@@ -493,7 +494,7 @@ bool JsonSettingsIO::saveRecentBooks(const RecentBooksStore& store, const char* 
 
   String json;
   serializeJson(doc, json);
-  return Storage.writeFile(path, json);
+  return FsHelpers::writeAtomically(path, json, "JsonIO");
 }
 
 bool JsonSettingsIO::loadRecentBooks(RecentBooksStore& store, const char* json) {
@@ -539,7 +540,7 @@ bool JsonSettingsIO::saveOpds(const OpdsServerStore& store, const char* path) {
 
   String json;
   serializeJson(doc, json);
-  return Storage.writeFile(path, json);
+  return FsHelpers::writeAtomically(path, json, "JsonIO");
 }
 
 bool JsonSettingsIO::loadOpds(OpdsServerStore& store, const char* json, bool* needsResave) {

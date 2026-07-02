@@ -12,6 +12,9 @@ constexpr uint8_t STATE_FILE_VERSION = 5;
 constexpr char STATE_FILE_BIN[] = "/.crosspoint/state.bin";
 constexpr char STATE_FILE_JSON[] = "/.crosspoint/state.json";
 constexpr char STATE_FILE_BAK[] = "/.crosspoint/state.bin.bak";
+// Sidecars written by FsHelpers::writeAtomically; consulted for crash recovery. (CrossInked)
+constexpr char STATE_FILE_JSON_BAK[] = "/.crosspoint/state.json.bak";
+constexpr char STATE_FILE_JSON_TMP[] = "/.crosspoint/state.json.tmp";
 }  // namespace
 
 CrossPointState CrossPointState::instance;
@@ -48,6 +51,21 @@ bool CrossPointState::loadFromFile() {
     String json = Storage.readFile(STATE_FILE_JSON);
     if (!json.isEmpty()) {
       return JsonSettingsIO::loadState(*this, json.c_str());
+    }
+  }
+
+  // Crash recovery: writeAtomically rotates the live file to <path>.bak and stages
+  // the new one at <path>.tmp before renaming it into place. If power was lost
+  // mid-swap the main file can be missing/empty while a good .bak (previous state)
+  // or .tmp (new state) survives — recover rather than resetting all state. (CrossInked)
+  for (const char* recovery : {STATE_FILE_JSON_BAK, STATE_FILE_JSON_TMP}) {
+    if (Storage.exists(recovery)) {
+      String json = Storage.readFile(recovery);
+      if (!json.isEmpty() && JsonSettingsIO::loadState(*this, json.c_str())) {
+        LOG_INF("CPS", "Recovered state from %s after interrupted write", recovery);
+        saveToFile();  // re-establish the canonical state.json
+        return true;
+      }
     }
   }
 
