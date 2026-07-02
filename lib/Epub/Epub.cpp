@@ -635,22 +635,78 @@ bool clearPreCreatedCacheDir(const std::string& dstDir, const std::string& orpha
   }
   return true;
 }
+
+// Session-scoped orphan-cache index (CrossInked). The original adoption scan
+// walked all of /.crosspoint reading every content.key sidecar AND pre-parsed
+// the OPF on EVERY cache miss -- O(N) SD path lookups per open and O(N^2)
+// during a full prewarm at ~1,850 books. Orphans only ever shrink within a
+// session (a cache is adopted, never spontaneously created), and the Arduino
+// loop is single-threaded, so we scan /.crosspoint once and keep the small set
+// of orphan candidates in RAM. Later misses consult the list; when it is empty
+// (the common case) we skip even the expensive OPF pre-parse. On overflow we
+// fall back to the per-miss directory walk so correctness never depends on the
+// cap.
+struct OrphanEntry {
+  uint64_t key;         // fnvHash64(title \x1f author)
+  std::string dirName;  // e.g. "epub_<hash>"
+};
+
+constexpr size_t kMaxOrphanIndex = 64;
+bool s_orphansScanned = false;
+bool s_orphansOverflowed = false;  // too many orphans -> fall back to full scan
+std::vector<OrphanEntry> s_orphans;
+
+// Parse a content.key sidecar's first line (the stored key). Returns false when
+// the sidecar is missing/garbage or the key is 0 (see F12: strtoull yields 0 on
+// garbage, and a stored 0 must never match a real key).
+bool readOrphanSidecarKey(const std::string& keyFilePath, uint64_t& outKey, std::string& outSourcePath) {
+  if (!Storage.exists(keyFilePath.c_str())) return false;
+  std::string content(Storage.readFile(keyFilePath.c_str()).c_str());
+  const size_t nl = content.find('\n');
+  if (nl == std::string::npos) return false;
+  const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
+  if (storedKey == 0) return false;  // garbage or absent key -> never adoptable
+  std::string storedPath = content.substr(nl + 1);
+  const size_t nl2 = storedPath.find('\n');
+  if (nl2 != std::string::npos) storedPath = storedPath.substr(0, nl2);
+  while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
+  outKey = storedKey;
+  outSourcePath = std::move(storedPath);
+  return true;
+}
 }  // namespace
 
-void Epub::tryAdoptOrphanCacheByContentKey() {
-  if (BookMetadataCache::exists(cachePath)) return;  // our own cache already present
+// Case-insensitive ASCII path compare (F6): FAT LFN lookups are
+// case-insensitive/case-preserving, so a case-only rename ("abc.epub" ->
+// "ABC.epub") leaves the old stored path matching the new file under
+// Storage.exists(), which would defeat adoption. Treat paths that differ only
+// by ASCII case as the same source so those renames adopt. (CrossInked)
+bool Epub::pathsEqualIgnoreAsciiCase(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); i++) {
+    char ca = a[i];
+    char cb = b[i];
+    if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca - 'A' + 'a');
+    if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb - 'A' + 'a');
+    if (ca != cb) return false;
+  }
+  return true;
+}
 
-  // Cheap metadata-only parse (no cache writes) to derive the content key.
-  BookMetadataCache::BookMetadata meta;
-  if (!parseContentOpf(meta, /*writeSpineEntries=*/false)) return;
-  if (meta.title.empty() && meta.author.empty()) return;
-  const std::string ck = meta.title + "\x1f" + meta.author;
-  const uint64_t key = ZipFile::fnvHash64(ck.c_str(), ck.size());
+// True when storedPath still refers to a live *other* file (so the orphan is
+// not actually orphaned and must not be stolen). A case-only rename of this
+// book leaves storedPath pointing at our own renamed file -- treat that as the
+// book itself (an orphan we should adopt), not a live original. (CrossInked, F6)
+bool Epub::storedPathIsLiveOriginal(const std::string& storedPath) const {
+  if (storedPath == filepath) return false;                      // same source
+  if (pathsEqualIgnoreAsciiCase(storedPath, filepath)) return false;  // case-only rename of this book
+  return Storage.exists(storedPath.c_str());                     // some other file still holds this path
+}
 
-  const size_t slash = cachePath.find_last_of('/');
-  if (slash == std::string::npos) return;
-  const std::string root = cachePath.substr(0, slash);       // e.g. "/.crosspoint"
-  const std::string ourName = cachePath.substr(slash + 1);   // e.g. "epub_<hash>"
+void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName) {
+  s_orphans.clear();
+  s_orphansOverflowed = false;
+  s_orphansScanned = true;
 
   auto dir = Storage.open(root.c_str());
   if (!dir || !dir.isDirectory()) {
@@ -659,7 +715,6 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
   }
 
   char name[128];
-  std::string adoptFrom;
   for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
     f.getName(name, sizeof(name));
     const bool isDir = f.isDirectory();
@@ -668,21 +723,109 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
     const std::string entryName(name);
     if (entryName == ourName || entryName.rfind("epub_", 0) != 0) continue;
 
-    const std::string keyFile = root + "/" + entryName + "/content.key";
-    if (!Storage.exists(keyFile.c_str())) continue;
-    std::string content(Storage.readFile(keyFile.c_str()).c_str());
-    const size_t nl = content.find('\n');
-    if (nl == std::string::npos) continue;
-    const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
-    if (storedKey != key) continue;
-    std::string storedPath = content.substr(nl + 1);
-    while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
-    if (storedPath == filepath) continue;                 // same source (shouldn't happen on a miss)
-    if (Storage.exists(storedPath.c_str())) continue;     // original still present -> not an orphan, don't steal
-    adoptFrom = root + "/" + entryName;                   // matching key + source file gone -> adopt
-    break;
+    uint64_t storedKey = 0;
+    std::string storedPath;
+    if (!readOrphanSidecarKey(root + "/" + entryName + "/content.key", storedKey, storedPath)) continue;
+    // Keep a candidate when it looks adoptable, i.e. NOT a live book sitting at
+    // its own canonical home. A live, correctly-homed book has both an existing
+    // source file AND a cache dir whose name matches cachePathForFilePath of the
+    // source -- skip those. This keeps the index tiny in a healthy library while
+    // still retaining (a) source-gone orphans from renames/renumbers/moves, and
+    // (b) dirs whose sidecar path is stale or case-mismatched (the F6 case-only
+    // rename still resolves the old path via FAT's case-insensitive exists()).
+    // The per-candidate storedPathIsLiveOriginal() check makes the final call.
+    const bool sourceExists = Storage.exists(storedPath.c_str());
+    const std::string canonicalHome = cachePathForFilePath(storedPath, root);
+    const bool atCanonicalHome = canonicalHome == (root + "/" + entryName);
+    if (sourceExists && atCanonicalHome) continue;  // live book at home -> not adoptable
+
+    if (s_orphans.size() >= kMaxOrphanIndex) {
+      LOG_INF("EBP", "Orphan-cache index overflow (>%zu); using full scan for adoption", kMaxOrphanIndex);
+      s_orphansOverflowed = true;
+      s_orphans.clear();
+      break;
+    }
+    s_orphans.push_back(OrphanEntry{storedKey, entryName});
   }
   dir.close();
+  LOG_DBG("EBP", "Built orphan-cache index: %zu candidate(s)", s_orphans.size());
+}
+
+void Epub::tryAdoptOrphanCacheByContentKey() {
+  if (BookMetadataCache::exists(cachePath)) return;  // our own cache already present
+
+  const size_t slash = cachePath.find_last_of('/');
+  if (slash == std::string::npos) return;
+  const std::string root = cachePath.substr(0, slash);      // e.g. "/.crosspoint"
+  const std::string ourName = cachePath.substr(slash + 1);  // e.g. "epub_<hash>"
+
+  // Build the session orphan index on the first miss.
+  if (!s_orphansScanned) {
+    buildOrphanIndex(root, ourName);
+  }
+
+  // Fast path: no orphan candidates this session -> skip the OPF pre-parse and
+  // the directory walk entirely. This is the common case at steady state and is
+  // the main win of the index (a fresh open no longer pays the duplicate
+  // parseContentOpf + O(N) sidecar walk when nothing was renamed). (F2)
+  if (!s_orphansOverflowed && s_orphans.empty()) {
+    return;
+  }
+
+  // Cheap metadata-only parse (no cache writes) to derive the content key. Only
+  // reached when at least one orphan candidate exists, so the extra parse is
+  // paid only when a rename may actually have happened.
+  BookMetadataCache::BookMetadata meta;
+  if (!parseContentOpf(meta, /*writeSpineEntries=*/false)) return;
+  if (meta.title.empty() && meta.author.empty()) return;
+  const std::string ck = meta.title + "\x1f" + meta.author;
+  const uint64_t key = ZipFile::fnvHash64(ck.c_str(), ck.size());
+
+  std::string adoptFrom;
+  size_t adoptedIndexSlot = SIZE_MAX;
+
+  if (s_orphansOverflowed) {
+    // Fallback: bounded per-miss directory walk (index too large to hold).
+    auto dir = Storage.open(root.c_str());
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      return;
+    }
+    char name[128];
+    for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
+      f.getName(name, sizeof(name));
+      const bool isDir = f.isDirectory();
+      f.close();
+      if (!isDir) continue;
+      const std::string entryName(name);
+      if (entryName == ourName || entryName.rfind("epub_", 0) != 0) continue;
+      uint64_t storedKey = 0;
+      std::string storedPath;
+      if (!readOrphanSidecarKey(root + "/" + entryName + "/content.key", storedKey, storedPath)) continue;
+      if (storedKey != key) continue;
+      if (storedPathIsLiveOriginal(storedPath)) continue;
+      adoptFrom = root + "/" + entryName;
+      break;
+    }
+    dir.close();
+  } else {
+    // Fast path: consult the in-RAM index, re-verifying the winning candidate's
+    // sidecar before committing (the index only stored the key, so re-read to
+    // confirm the source is still gone and guard against a case-only rename).
+    for (size_t i = 0; i < s_orphans.size(); i++) {
+      if (s_orphans[i].key != key) continue;
+      uint64_t storedKey = 0;
+      std::string storedPath;
+      const std::string dirPath = root + "/" + s_orphans[i].dirName;
+      if (!readOrphanSidecarKey(dirPath + "/content.key", storedKey, storedPath) || storedKey != key) {
+        continue;
+      }
+      if (storedPathIsLiveOriginal(storedPath)) continue;
+      adoptFrom = dirPath;
+      adoptedIndexSlot = i;
+      break;
+    }
+  }
 
   if (adoptFrom.empty()) return;
   LOG_INF("EBP", "Adopting orphaned cache %s for %s (content-key match, source gone)", adoptFrom.c_str(),
@@ -700,6 +843,12 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
   if (!Storage.rename(adoptFrom.c_str(), cachePath.c_str())) {
     // Falls back to a fresh build; log so a stranded orphan is diagnosable.
     LOG_ERR("EBP", "Failed to adopt orphaned cache %s -> %s; will rebuild fresh", adoptFrom.c_str(), cachePath.c_str());
+    return;
+  }
+
+  // Adoption succeeded: this orphan no longer exists, so drop it from the index.
+  if (adoptedIndexSlot != SIZE_MAX && adoptedIndexSlot < s_orphans.size()) {
+    s_orphans.erase(s_orphans.begin() + adoptedIndexSlot);
   }
 }
 

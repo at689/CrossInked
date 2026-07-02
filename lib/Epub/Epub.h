@@ -61,6 +61,12 @@ class Epub {
   // don't reset reading progress. See ROADMAP.md #5.
   void writeContentKeySidecar() const;
   void tryAdoptOrphanCacheByContentKey();
+  // Scan /.crosspoint once per session, caching orphan-cache candidates in RAM so
+  // subsequent cache misses avoid the O(N) sidecar walk + duplicate OPF parse. (F2)
+  void buildOrphanIndex(const std::string& root, const std::string& ourName);
+  // True when storedPath still refers to a live *other* file (so the orphan is not
+  // orphaned and must not be stolen). Handles case-only renames of this book. (F6)
+  bool storedPathIsLiveOriginal(const std::string& storedPath) const;
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
@@ -131,4 +137,6 @@ class Epub {
  private:
   bool loadCrossInkLocations();
   bool generateThumbBmpInternal(int width, int height, bool adaptiveContain) const;
+  // ASCII case-insensitive path compare used by orphan-cache adoption. (CrossInked, F6)
+  static bool pathsEqualIgnoreAsciiCase(const std::string& a, const std::string& b);
 };
