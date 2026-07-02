@@ -74,8 +74,10 @@ class FileBrowserActivity final : public Activity {
   void toggleHiddenFiles();
   size_t findEntry(const std::string& name);
   // Jump the selector to the first entry of the next/previous first-letter group
-  // (used by the hold gesture in Books mode). Returns the new selector index. (CrossInked)
-  size_t letterJumpIndex(bool forward);
+  // (used by the hold gesture in Books mode). Returns the new selector index. Scans
+  // are capped per call; in a single first-letter group (e.g. an all-numbered series
+  // folder) falls back to a page jump using pageItems. (CrossInked)
+  size_t letterJumpIndex(bool forward, int pageItems);
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",

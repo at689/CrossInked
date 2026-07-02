@@ -224,23 +224,56 @@ bool FileBrowserActivity::loadFilesIntoVector(size_t cap, bool& overflow) {
   return true;
 }
 
-size_t FileBrowserActivity::letterJumpIndex(bool forward) {
+size_t FileBrowserActivity::letterJumpIndex(bool forward, int pageItems) {
   const int n = static_cast<int>(entryCount());
   if (n <= 1) return selectorIndex;
   const int cur = static_cast<int>(selectorIndex);
+
+  // In indexed folders every uncached entryNameAt() is a multi-transaction SD read,
+  // and this fires every ~500ms while the button is held, so bound the reads per
+  // press instead of scanning a whole (possibly hundreds-long) letter group. If the
+  // cap is hit before a group boundary is found we stop at the furthest scanned row
+  // — a useful bounded move — and the next tick continues from there. (CrossInked)
+  constexpr int MAX_JUMP_SCAN = 48;
+
   const char curChar = FsHelpers::firstSortChar(entryNameAt(cur));
+
   if (forward) {
-    for (int k = cur + 1; k < n; ++k) {
+    const int limit = std::min(n, cur + 1 + MAX_JUMP_SCAN);
+    for (int k = cur + 1; k < limit; ++k) {
       if (FsHelpers::firstSortChar(entryNameAt(k)) != curChar) return static_cast<size_t>(k);
     }
-    return static_cast<size_t>(n - 1);
+    // Hit the scan cap before the end: advance to the cap boundary and let the next
+    // tick carry on, rather than teleporting to the last row.
+    if (limit < n) return static_cast<size_t>(limit - 1);
+    // Scanned to the end with no boundary => single first-letter group (e.g. a series
+    // folder of "01..24 Title"). Fall back to the pre-existing page jump so the hold
+    // still pages through the folder instead of teleporting to the last entry.
+    return static_cast<size_t>(ButtonNavigator::nextPageIndex(cur, n, pageItems));
   }
-  // Backward: land on the first entry of the previous distinct first-letter group.
+
+  // Backward: land on the first entry of the previous distinct first-letter group,
+  // with the same per-press read cap.
+  int scanned = 0;
   int k = cur - 1;
-  while (k >= 0 && FsHelpers::firstSortChar(entryNameAt(k)) == curChar) --k;
-  if (k < 0) return 0;
+  while (k >= 0 && scanned < MAX_JUMP_SCAN && FsHelpers::firstSortChar(entryNameAt(k)) == curChar) {
+    --k;
+    ++scanned;
+  }
+  if (k < 0) {
+    // No earlier group boundary in the whole list => single-group folder: page jump.
+    return static_cast<size_t>(ButtonNavigator::previousPageIndex(cur, n, pageItems));
+  }
+  if (scanned >= MAX_JUMP_SCAN && FsHelpers::firstSortChar(entryNameAt(k)) == curChar) {
+    // Cap hit while still inside the current group: move back by the scanned amount
+    // and continue next tick instead of stalling on a huge same-letter run.
+    return static_cast<size_t>(k < 0 ? 0 : k);
+  }
   const char prevChar = FsHelpers::firstSortChar(entryNameAt(k));
-  while (k - 1 >= 0 && FsHelpers::firstSortChar(entryNameAt(k - 1)) == prevChar) --k;
+  while (k - 1 >= 0 && scanned < MAX_JUMP_SCAN * 2 && FsHelpers::firstSortChar(entryNameAt(k - 1)) == prevChar) {
+    --k;
+    ++scanned;
+  }
   return static_cast<size_t>(k);
 }
 
@@ -903,7 +936,7 @@ void FileBrowserActivity::loop() {
   buttonNavigator.onNextContinuous([this, listSize, pageItems] {
     if (mode == Mode::Books) {
       RenderLock lock(*this);
-      selectorIndex = letterJumpIndex(true);
+      selectorIndex = letterJumpIndex(true, pageItems);
     } else {
       selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     }
@@ -913,7 +946,7 @@ void FileBrowserActivity::loop() {
   buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
     if (mode == Mode::Books) {
       RenderLock lock(*this);
-      selectorIndex = letterJumpIndex(false);
+      selectorIndex = letterJumpIndex(false, pageItems);
     } else {
       selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     }
