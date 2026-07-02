@@ -22,8 +22,18 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 #include "network/WifiPowerSaveGuard.h"
 
 namespace {
+// CrossInked (L1a): default to the FORK's release channel, not upstream. The
+// old default pointed at uxjulia/CrossInk, so Settings > Check for Updates would
+// flash upstream firmware over this fork -- wiping every fork feature and (via
+// the version namespace) invalidating all book caches, with no reinstall path.
+// Keep the #ifndef so a build can still override the channel.
+//
+// The fork repo currently publishes no releases: GitHub returns HTTP 404 with a
+// body that has no "tag_name", so checkForUpdate() falls through to
+// JSON_PARSE_ERROR (foundTag()==false) and OtaUpdateActivity shows STR_UPDATE_FAILED
+// -- a clean failure, never a crash. Verified against the existing error path.
 #ifndef CROSSINK_OTA_RELEASE_URL
-#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/uxjulia/CrossInk/releases/latest"
+#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/at689/CrossInked/releases/latest"
 #endif
 
 constexpr char latestReleaseUrl[] = CROSSINK_OTA_RELEASE_URL;
