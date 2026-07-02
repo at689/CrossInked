@@ -225,6 +225,49 @@ uint64_t epubFileSize(const std::string& path) {
   f.close();
   return sz;
 }
+
+// Serializes a SidecarInfo to the 3-line content.key format.
+String serializeSidecar(uint64_t key, const std::string& sourcePath, uint64_t sourceSize) {
+  String out(std::to_string(key).c_str());
+  out += "\n";
+  out += sourcePath.c_str();
+  out += "\n";
+  out += std::to_string(sourceSize).c_str();
+  out += "\n";
+  return out;
+}
+
+// Writes the content.key sidecar crash-consistently (F12): a truncate-in-place
+// write left a torn sidecar on power loss, and the dangerous shape "key line
+// intact, path line truncated" defeated the anti-steal guard, letting a
+// same-title duplicate rename away a live cache. Write a temp file, then swap
+// it in. SdFat rename() fails onto an existing path, so remove the old file
+// first (an interrupted swap leaves the intact temp behind, not a torn final).
+bool writeSidecarAtomic(const std::string& keyFile, const String& content) {
+  const std::string tmp = keyFile + ".tmp";
+  if (Storage.exists(tmp.c_str())) Storage.remove(tmp.c_str());
+  FsFile f;
+  if (!Storage.openFileForWrite("EBP", tmp, f)) {
+    LOG_ERR("EBP", "Could not open content.key temp for write: %s", tmp.c_str());
+    return false;
+  }
+  const size_t len = content.length();
+  const size_t written = f.write(reinterpret_cast<const uint8_t*>(content.c_str()), len);
+  f.flush();
+  f.sync();
+  if (!f.close() || written != len) {
+    LOG_ERR("EBP", "Short/failed write of content.key temp: %s", tmp.c_str());
+    Storage.remove(tmp.c_str());
+    return false;
+  }
+  if (Storage.exists(keyFile.c_str())) Storage.remove(keyFile.c_str());
+  if (!Storage.rename(tmp.c_str(), keyFile.c_str())) {
+    LOG_ERR("EBP", "Could not swap content.key into place: %s", keyFile.c_str());
+    Storage.remove(tmp.c_str());
+    return false;
+  }
+  return true;
+}
 }  // namespace
 
 Epub::Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
@@ -636,15 +679,9 @@ void Epub::writeContentKeySidecar() const {
   const auto& m = bookMetadataCache->coreMetadata;
   const std::string ck = m.title + "\x1f" + m.author;
   const uint64_t key = ZipFile::fnvHash64(ck.c_str(), ck.size());
-  String out(std::to_string(key).c_str());
-  out += "\n";
-  out += filepath.c_str();
-  out += "\n";
   // Line 3 (F5): source file size for the edition check. Written as 0 only if
   // the file size can't be read; readers treat 0 as "legacy" and skip the guard.
-  out += std::to_string(currentSize).c_str();
-  out += "\n";
-  Storage.writeFile(keyFile.c_str(), out);
+  writeSidecarAtomic(keyFile, serializeSidecar(key, filepath, currentSize));
 }
 
 namespace {
