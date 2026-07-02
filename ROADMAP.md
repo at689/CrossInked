@@ -4,6 +4,10 @@ Remaining designed-but-not-yet-implemented features, with concrete implementatio
 sketches. Features #1–#5, #7, #9 are implemented (see [CROSSINKED.md](CROSSINKED.md));
 #8 was reframed by #5's approach. File:line references are approximate.
 
+> The July 2026 audit fix wave landed first (see `docs/audit-2026-07.md`
+> resolution table): #5's sidecar now carries a source-size field and there is a
+> session-scoped orphan index in `Epub.cpp` — both directly reusable by #8.
+
 ## 6. Primary-author / role-filtered author string  (effort: M, risk: Low-Med)
 **Problem:** every `dc:creator` is joined with `", "` (`ContentOpfParser.cpp:~329-333`),
 so Gutenberg books listing translators/editors as creators show compound authors.

@@ -1,5 +1,31 @@
 # Changelog
 
+## [CrossInked] - 2026-07-02
+
+Fix wave from the July 2026 deep audit (`docs/audit-2026-07.md`, findings F1-F20 +
+landmines L1/L2). All fixes verified with green simulator builds, 132/132 unit
+tests, and smoke tests including a new cache-adoption scenario.
+
+### Fixed
+- **Cache adoption (#5) now works on device** (F1, F5, F6): pre-created destination cache dirs are cleared before the SdFat rename (stray stats/progress preserved into the adopted dir; `rmdir` only ever removes empty dirs), rename failures are logged instead of swallowed, adoption validates the source file size so a different edition's cache is never adopted, and case-only renames adopt correctly. The simulator masked the original bug because POSIX `rename()` accepts an existing empty destination dir while SdFat's FAT rename does not.
+- Adoption scans use a session-scoped in-RAM orphan index (F2): opening a new book no longer walks every `/.crosspoint/epub_*` dir reading sidecars (previously O(N²) across a prewarm run at ~1,850 books), and the no-orphans fast path also skips the duplicate OPF pre-parse.
+- `content.key` sidecars are written atomically, reject zero/garbage keys, and are repointed after a book move so a finished book's cache can't be stolen by a same-title duplicate (F12, F13).
+- Recent Books prunes dead-path entries on load so renamed/adopted books no longer ghost in Continue Reading (F14).
+- **Cover prewarm reworked** (F3, F4, F7, F8, F9, F15, F16): keeps the device awake for the run (auto-sleep previously killed it mid-walk); generates the cover sizes the UI actually reads — recents grid 123x180, Lyra carousel 296x468 + 200x390, and the sleep-screen crop/fit variant — instead of an orphaned 108x180 thumb; skips macOS `._*`/dot entries; bounds per-folder memory at 256 queued paths with a skip cursor; issues a half-refresh every 24 progress paints to clear e-ink ghosting and throttles repaints on cached re-runs; polls cancel between per-book pipeline stages; and uses a 512-byte name buffer so long UTF-8 filenames aren't truncated.
+- Jump-to-letter hold no longer races the render task over the shared index-row cache in indexed (>200-entry) folders; its SD scans are capped per press; and it falls back to page-jump in single-group folders instead of jumping to the list edge (F10, F18).
+- All five JSON stores write atomically via a new `AtomicFile` helper (tmp → sync → `.bak` rotate → rename), `state.json` loading falls back to `.bak`/`.tmp`, and `lastBrowsePath` persists on browser exit / book open instead of rewriting `state.json` on every folder navigation (F11).
+- Letter grouping decodes the first UTF-8 codepoint and folds Latin accents (É→E, Ø→O), grouping other scripts under one bucket instead of byte garbage (F17).
+- Series-gap markers only render for book files in Books mode — no more phantom markers in the firmware picker or sleep-image folders (F19).
+- Guide `start` references carrying a `#fragment` now resolve instead of silently baking the miss into the cache (F20).
+- `book.bin` is built to a temp file and renamed on completion, and `load()` rejects truncated files, so a mid-build power loss can no longer leave a permanently corrupt-but-accepted metadata cache (I8).
+- `DifferentialRoundingTest` links again (missing `EpdFontFamily.cpp` in its CMake sources; pre-existing upstream break).
+
+### Changed
+- `BOOK_CACHE_VERSION` moved from 9 to `0x89` — the fork reserves `0x80|N` so upstream's own future version bumps can never collide with fork cache formats (L1). One-time cache rebuild per book on first open after flashing this build.
+- OTA "Check for Updates" now defaults to this fork's releases (`at689/CrossInked`) instead of upstream — upstream's next release would otherwise have silently replaced CrossInked and wiped every fork feature (L1).
+- The simulator env now applies the JPEGDEC progressive-JPEG patches the device build already had, restoring sim/device decode parity; the patch script warns loudly when a JPEGDEC dir can't be patched (L2).
+- New host test suites: `test/content_key_sidecar/` (12 cases) and 5 new multibyte `NaturalSortTest` cases; the sim smoke test gained a cache-adoption scenario with a pre-created destination dir.
+
 ## [CrossInked] - 2026-07-01
 
 Personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) tuned for a large,
