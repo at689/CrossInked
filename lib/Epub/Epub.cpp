@@ -16,6 +16,7 @@
 #include <functional>
 #include <utility>
 
+#include "Epub/ContentKeySidecar.h"
 #include "Epub/parsers/ContainerParser.h"
 #include "Epub/parsers/ContentOpfParser.h"
 #include "Epub/parsers/TocNavParser.h"
@@ -159,61 +160,16 @@ class CoverImageRefScanner final : public Print {
   }
 };
 
-// content.key sidecar parsing/sizing (CrossInked). Defined here so both
-// writeContentKeySidecar() and the adoption scan can use them.
-//
-// Sidecar format (line-based, backward-tolerant):
-//   line 1: fnvHash64(title \x1f author)   (decimal)
-//   line 2: source EPUB path
-//   line 3 (optional, F5): source EPUB file size in bytes (decimal)
-// A missing or unparseable size line yields sourceSize == 0 ("legacy" sidecar).
-struct SidecarInfo {
-  uint64_t key = 0;
-  std::string sourcePath;
-  uint64_t sourceSize = 0;  // 0 == absent/legacy
-};
+// content.key sidecar helpers (CrossInked). The line-based format and parse
+// rules live in the dependency-free Epub/ContentKeySidecar.h so they are host
+// unit-tested; these wrappers add the Storage I/O.
+using SidecarInfo = content_key_sidecar::Info;
 
-// Returns false when the sidecar is missing/garbage or the key is 0 (see F12:
-// strtoull yields 0 on garbage, and a stored 0 must never match a real key).
+// Returns false when the sidecar is missing/garbage or the key is 0 (see F12).
 bool readContentKeySidecar(const std::string& keyFilePath, SidecarInfo& out) {
   if (!Storage.exists(keyFilePath.c_str())) return false;
-  std::string content(Storage.readFile(keyFilePath.c_str()).c_str());
-  const size_t nl = content.find('\n');
-  if (nl == std::string::npos) return false;
-  const uint64_t storedKey = strtoull(content.substr(0, nl).c_str(), nullptr, 10);
-  if (storedKey == 0) return false;  // garbage or absent key -> never adoptable
-
-  std::string rest = content.substr(nl + 1);
-  std::string storedPath = rest;
-  std::string sizeLine;
-  const size_t nl2 = rest.find('\n');
-  if (nl2 != std::string::npos) {
-    storedPath = rest.substr(0, nl2);
-    sizeLine = rest.substr(nl2 + 1);
-    const size_t nl3 = sizeLine.find('\n');
-    if (nl3 != std::string::npos) sizeLine = sizeLine.substr(0, nl3);
-  }
-  while (!storedPath.empty() && (storedPath.back() == '\n' || storedPath.back() == '\r')) storedPath.pop_back();
-
-  uint64_t storedSize = 0;
-  if (!sizeLine.empty()) {
-    // Trim and require all-digits so a non-numeric line reads as legacy (0), not garbage.
-    while (!sizeLine.empty() && (sizeLine.back() == '\n' || sizeLine.back() == '\r' || sizeLine.back() == ' '))
-      sizeLine.pop_back();
-    bool allDigits = !sizeLine.empty();
-    for (const char c : sizeLine) {
-      if (c < '0' || c > '9') {
-        allDigits = false;
-        break;
-      }
-    }
-    if (allDigits) storedSize = strtoull(sizeLine.c_str(), nullptr, 10);
-  }
-
-  out.key = storedKey;
-  out.sourcePath = std::move(storedPath);
-  out.sourceSize = storedSize;
-  return true;
+  const std::string content(Storage.readFile(keyFilePath.c_str()).c_str());
+  return content_key_sidecar::parse(content, out);
 }
 
 // Size in bytes of the EPUB backing file at path, or 0 if it can't be read
@@ -228,13 +184,7 @@ uint64_t epubFileSize(const std::string& path) {
 
 // Serializes a SidecarInfo to the 3-line content.key format.
 String serializeSidecar(uint64_t key, const std::string& sourcePath, uint64_t sourceSize) {
-  String out(std::to_string(key).c_str());
-  out += "\n";
-  out += sourcePath.c_str();
-  out += "\n";
-  out += std::to_string(sourceSize).c_str();
-  out += "\n";
-  return out;
+  return String(content_key_sidecar::serialize(key, sourcePath, sourceSize).c_str());
 }
 
 // Writes the content.key sidecar crash-consistently (F12): a truncate-in-place
