@@ -81,6 +81,11 @@ class Epub {
   // Used by the move-to-/Read flow so a finished book's live cache can't be
   // adopted (stolen) by a same-title duplicate via a stale source path. (F13)
   static void rewriteContentKeySourcePath(const std::string& cacheDir, const std::string& newSourcePath);
+  // Drops the session-scoped orphan-cache index so the next cache miss rescans
+  // /.crosspoint. Call after the SD card is (re)mounted or when orphan dirs are
+  // created out of band -- otherwise a stale "already scanned, empty" flag would
+  // skip adoption for the rest of the session. (CrossInked, F2)
+  static void invalidateOrphanIndex();
   // True when a metadata cache already exists for this book, i.e. load() will
   // hit the fast path instead of rebuilding. Cheap: no parsing, just a stat.
   static bool hasCache(const std::string& filepath, const std::string& cacheDir);

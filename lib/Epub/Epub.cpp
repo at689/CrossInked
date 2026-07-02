@@ -840,6 +840,12 @@ void Epub::buildOrphanIndex(const std::string& root, const std::string& ourName)
   LOG_DBG("EBP", "Built orphan-cache index: %zu candidate(s)", s_orphans.size());
 }
 
+void Epub::invalidateOrphanIndex() {
+  s_orphansScanned = false;
+  s_orphansOverflowed = false;
+  s_orphans.clear();
+}
+
 void Epub::tryAdoptOrphanCacheByContentKey() {
   if (BookMetadataCache::exists(cachePath)) return;  // our own cache already present
 
