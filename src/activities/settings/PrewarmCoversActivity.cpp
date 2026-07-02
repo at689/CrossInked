@@ -32,7 +32,11 @@ void PrewarmCoversActivity::stepWork() {
     const std::string path = pendingFiles.back();
     pendingFiles.pop_back();
     Epub epub(path, "/.crosspoint");
-    epub.setupCacheDir();
+    // (CrossInked, F1) Do NOT pre-create the cache dir here: load() calls
+    // setupCacheDir() itself on the build path, and pre-creating it defeats
+    // orphan-cache adoption on device (SdFat's FAT rename fails when the
+    // destination path already exists), stranding reading progress after a
+    // manual SD rename -- the exact workflow this maintenance action serves.
     if (epub.load(true, true)) {  // build metadata cache if missing; skip CSS (not needed for covers)
       const bool coverOk = epub.generateCoverBmp();
       const bool thumbOk = epub.generateThumbBmp(0, 0);
