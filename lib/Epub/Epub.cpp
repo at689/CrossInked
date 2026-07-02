@@ -576,6 +576,67 @@ void Epub::writeContentKeySidecar() const {
   Storage.writeFile(keyFile.c_str(), out);
 }
 
+namespace {
+// Clears a pre-created destination cache dir so an orphan can be renamed into
+// its place. SdFat's FAT rename() FAILS when the destination path already
+// exists (unlike POSIX rename in the simulator), and several flows
+// (prewarm/setupCacheDir, reader open, Clear Reading Cache) create the empty
+// destination dir before load() runs — so without this, adoption silently
+// no-ops on device and reading progress is stranded forever. (CrossInked)
+//
+// SAFETY: the caller has already verified !BookMetadataCache::exists(dstDir),
+// so dstDir provably contains no book.bin. We only ever rmdir an empty dir
+// (rmdir fails on non-empty dirs), and any stray files (e.g. stats*.bin /
+// progress.bin restored in place by Clear Reading Cache) are relocated into
+// the orphan we are about to adopt rather than deleted — except when the
+// orphan already holds its own copy under the same name, in which case the
+// orphan's copy (the real, longer reading history) wins and the stray is
+// dropped. Returns true when dstDir was removed and the rename may proceed.
+bool clearPreCreatedCacheDir(const std::string& dstDir, const std::string& orphanDir) {
+  if (BookMetadataCache::exists(dstDir)) return false;  // never touch a dir holding a real cache
+
+  auto dir = Storage.open(dstDir.c_str());
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return false;
+  }
+
+  // Relocate any stray files into the orphan dir before removing the (now
+  // empty) destination. The orphan's own files take precedence on collisions.
+  char name[128];
+  bool relocateOk = true;
+  for (auto f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    f.getName(name, sizeof(name));
+    const bool isSubDir = f.isDirectory();
+    f.close();
+    const std::string entryName(name);
+    if (entryName.empty() || entryName == "." || entryName == "..") continue;
+    if (isSubDir) {
+      // A sub-directory means this is not a freshly-created stats-only dir;
+      // leave it untouched and abort rather than risk data.
+      relocateOk = false;
+      continue;
+    }
+    const std::string src = dstDir + "/" + entryName;
+    const std::string dst = orphanDir + "/" + entryName;
+    if (Storage.exists(dst.c_str())) {
+      Storage.remove(src.c_str());  // orphan already has the authoritative copy
+    } else if (!Storage.rename(src.c_str(), dst.c_str())) {
+      LOG_ERR("EBP", "Could not relocate stray cache file %s -> %s during adoption", src.c_str(), dst.c_str());
+      relocateOk = false;
+    }
+  }
+  dir.close();
+
+  if (!relocateOk) return false;  // leave the orphan intact rather than lose data
+  if (!Storage.rmdir(dstDir.c_str())) {
+    LOG_ERR("EBP", "Could not rmdir pre-created cache dir %s; leaving orphan unadopted", dstDir.c_str());
+    return false;
+  }
+  return true;
+}
+}  // namespace
+
 void Epub::tryAdoptOrphanCacheByContentKey() {
   if (BookMetadataCache::exists(cachePath)) return;  // our own cache already present
 
@@ -626,7 +687,20 @@ void Epub::tryAdoptOrphanCacheByContentKey() {
   if (adoptFrom.empty()) return;
   LOG_INF("EBP", "Adopting orphaned cache %s for %s (content-key match, source gone)", adoptFrom.c_str(),
           filepath.c_str());
-  Storage.rename(adoptFrom.c_str(), cachePath.c_str());  // safe no-op on failure -> falls back to fresh build
+
+  // SdFat rename() fails if the destination path already exists, and several
+  // flows pre-create the (empty, book.bin-less) destination dir before load().
+  // Clear it first, relocating any stray stats/progress into the orphan. If it
+  // still exists we cannot rename onto it, so bail rather than silently no-op. (CrossInked)
+  if (Storage.exists(cachePath.c_str()) && !clearPreCreatedCacheDir(cachePath, adoptFrom)) {
+    LOG_ERR("EBP", "Adoption aborted: destination cache dir %s exists and could not be cleared", cachePath.c_str());
+    return;
+  }
+
+  if (!Storage.rename(adoptFrom.c_str(), cachePath.c_str())) {
+    // Falls back to a fresh build; log so a stranded orphan is diagnosable.
+    LOG_ERR("EBP", "Failed to adopt orphaned cache %s -> %s; will rebuild fresh", adoptFrom.c_str(), cachePath.c_str());
+  }
 }
 
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
